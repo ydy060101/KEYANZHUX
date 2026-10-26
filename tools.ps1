@@ -97,7 +97,19 @@ asyncio.run(main())
         try { & npx vite } finally { Pop-Location }
     }
 
-    "gen-api" { Write-Host "openapi.yaml generation lands with T0.2" }
+    "gen-api" {
+        Push-Location (Join-Path $Root "frontend")
+        try {
+            & npx openapi-typescript ../openapi.yaml -o src/api/schema.d.ts
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            & git -C $Root diff --exit-code --quiet -- frontend/src/api/schema.d.ts
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "schema.d.ts differs from openapi.yaml — regenerate and commit" -ForegroundColor Red
+                exit 1
+            }
+            Write-Host "generated client matches the contract" -ForegroundColor Green
+        } finally { Pop-Location }
+    }
 
     "eval-qa" { Invoke-Step "eval" { Push-Location (Join-Path $Root "backend"); try { & $Py -m app.eval_qa } finally { Pop-Location } } }
 }

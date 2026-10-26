@@ -1,0 +1,1269 @@
+openapi: 3.1.0
+info:
+  title: 科研助手 Agent API
+  version: 0.1.0
+  description: |
+    Contract for 01 §5. Paths and field names are fixed; changes go through
+    CHANGE_REQUESTS.md.
+
+    All ids are UUID strings. Times are ISO8601 UTC. Errors use
+    `{"error": {"code", "message", "detail"}}` (H17). Streaming endpoints use
+    `text/event-stream` with event types `token | anchor | progress | done | error`.
+servers:
+  - url: /api/v1
+
+components:
+  securitySchemes:
+    UserHeader:
+      type: apiKey
+      in: header
+      name: X-User-Id
+
+  parameters:
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+    PageSize:
+      name: page_size
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 200, default: 20 }
+    DocId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, detail]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            detail: { type: object, additionalProperties: true }
+
+    BBox:
+      type: array
+      description: "[x0, y0, x1, y1] in PDF points, origin top-left."
+      minItems: 4
+      maxItems: 4
+      items: { type: number }
+
+    Anchor:
+      type: object
+      required: [doc_id, block_id, page, bbox]
+      properties:
+        doc_id: { type: string, format: uuid }
+        block_id: { type: string }
+        page: { type: integer, minimum: 1 }
+        bbox: { $ref: "#/components/schemas/BBox" }
+
+    Author:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        affiliation: { type: [string, "null"] }
+        anchor: { anyOf: [{ $ref: "#/components/schemas/Anchor" }, { type: "null" }] }
+
+    DocMeta:
+      type: object
+      properties:
+        title: { type: string }
+        authors:
+          type: array
+          items: { $ref: "#/components/schemas/Author" }
+        abstract:
+          type: object
+          properties:
+            text: { type: string }
+            anchor: { anyOf: [{ $ref: "#/components/schemas/Anchor" }, { type: "null" }] }
+        year: { type: [integer, "null"] }
+        venue: { type: [string, "null"] }
+
+    OutlineItem:
+      type: object
+      required: [id, level, title, page, block_id]
+      properties:
+        id: { type: string }
+        level: { type: integer, minimum: 1, maximum: 3 }
+        title: { type: string }
+        page: { type: integer }
+        block_id: { type: string }
+
+    Block:
+      type: object
+      required: [id, type, page, bbox, reading_order]
+      properties:
+        id: { type: string }
+        type:
+          type: string
+          enum: [heading, paragraph, table, figure, formula, caption, reference, footnote, list_item]
+        page: { type: integer }
+        bbox: { $ref: "#/components/schemas/BBox" }
+        reading_order: { type: integer }
+        section_id: { type: [string, "null"] }
+        text: { type: string }
+        latex: { type: [string, "null"] }
+        html: { type: [string, "null"] }
+        asset_id: { type: [string, "null"] }
+        lang: { type: string }
+        confidence: { type: number, minimum: 0, maximum: 1 }
+
+    Reference:
+      type: object
+      required: [id, index, raw]
+      properties:
+        id: { type: string }
+        index: { type: integer }
+        raw: { type: string }
+        title: { type: [string, "null"] }
+        authors:
+          type: array
+          items: { type: string }
+        year: { type: [integer, "null"] }
+        doi: { type: [string, "null"] }
+        arxiv_id: { type: [string, "null"] }
+        block_id: { type: string }
+        bbox: { $ref: "#/components/schemas/BBox" }
+        worth_score: { type: number, minimum: 0, maximum: 100 }
+        worth_reasons:
+          type: array
+          items: { type: string }
+
+    Citation:
+      type: object
+      required: [id, marker, block_id]
+      properties:
+        id: { type: string }
+        marker: { type: string }
+        ref_ids:
+          type: array
+          items: { type: string }
+        block_id: { type: string }
+        bbox: { $ref: "#/components/schemas/BBox" }
+        method:
+          type: string
+          enum: [link_annotation, regex]
+
+    Asset:
+      type: object
+      required: [id, kind, page, bbox, path]
+      properties:
+        id: { type: string }
+        kind: { type: string, enum: [figure, table, formula] }
+        page: { type: integer }
+        bbox: { $ref: "#/components/schemas/BBox" }
+        path: { type: string }
+
+    DocumentModel:
+      type: object
+      required: [doc_id, sha256, page_count, source_kind, meta]
+      properties:
+        doc_id: { type: string, format: uuid }
+        sha256: { type: string }
+        arxiv_id: { type: [string, "null"] }
+        version: { type: [string, "null"] }
+        page_count: { type: integer }
+        source_kind: { type: string, enum: [vector, scanned, mixed] }
+        meta: { $ref: "#/components/schemas/DocMeta" }
+        outline:
+          type: array
+          items: { $ref: "#/components/schemas/OutlineItem" }
+        blocks:
+          type: array
+          items: { $ref: "#/components/schemas/Block" }
+        references:
+          type: array
+          items: { $ref: "#/components/schemas/Reference" }
+        citations:
+          type: array
+          items: { $ref: "#/components/schemas/Citation" }
+        assets:
+          type: array
+          items: { $ref: "#/components/schemas/Asset" }
+
+    Document:
+      type: object
+      required: [id, sha256, title, status, page_count]
+      properties:
+        id: { type: string, format: uuid }
+        sha256: { type: string }
+        arxiv_id: { type: [string, "null"] }
+        version: { type: [string, "null"] }
+        title: { type: string }
+        status:
+          type: string
+          enum: [uploading, parsing, ready, partial, failed]
+        source_kind: { type: string, enum: [vector, scanned, mixed] }
+        page_count: { type: integer }
+        tags:
+          type: array
+          items: { type: string }
+        created_at: { type: string, format: date-time }
+        stats:
+          type: object
+          properties:
+            blocks: { type: integer }
+            figures: { type: integer }
+            tables: { type: integer }
+            formulas: { type: integer }
+            references: { type: integer }
+
+    DocumentPage:
+      type: object
+      required: [items, total, page, page_size]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Document" }
+        total: { type: integer }
+        page: { type: integer }
+        page_size: { type: integer }
+
+    DedupInfo:
+      type: object
+      required: [level, matched_doc_id, similarity, suggestion, reason]
+      properties:
+        level:
+          type: string
+          enum: [exact_duplicate, same_paper_other_version, content_duplicate, possible_duplicate]
+        matched_doc_id: { type: string, format: uuid }
+        similarity: { type: number, minimum: 0, maximum: 1 }
+        existing_version: { type: [string, "null"] }
+        new_version: { type: [string, "null"] }
+        suggestion: { type: string, enum: [keep_existing, replace, ask] }
+        reason: { type: string }
+
+    UploadResult:
+      type: object
+      required: [upload_id, doc_id, job_id, status]
+      properties:
+        upload_id: { type: string }
+        doc_id: { type: string, format: uuid }
+        job_id: { type: string, format: uuid }
+        status: { type: string }
+        dedup: { anyOf: [{ $ref: "#/components/schemas/DedupInfo" }, { type: "null" }] }
+
+    Job:
+      type: object
+      required: [id, kind, status, progress, stage]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string }
+        status: { type: string, enum: [queued, running, succeeded, failed, cancelled] }
+        progress: { type: number, minimum: 0, maximum: 1 }
+        stage: { type: string }
+        error: { type: [string, "null"] }
+        result: { type: [object, "null"], additionalProperties: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    VersionDiff:
+      type: object
+      required: [other_id, stats, summary]
+      properties:
+        other_id: { type: string, format: uuid }
+        stats:
+          type: object
+          properties:
+            sections_added: { type: integer }
+            sections_removed: { type: integer }
+            sections_modified: { type: integer }
+            figures_changed: { type: integer }
+            tables_changed: { type: integer }
+            references_added: { type: integer }
+            references_removed: { type: integer }
+        sections:
+          type: array
+          items:
+            type: object
+            properties:
+              title: { type: string }
+              change: { type: string, enum: [added, removed, modified, unchanged] }
+        summary: { type: string, maxLength: 200 }
+
+    QAScope:
+      type: object
+      required: [type]
+      properties:
+        type: { type: string, enum: [doc, set, all] }
+        doc_ids:
+          type: array
+          items: { type: string, format: uuid }
+
+    QARequest:
+      type: object
+      required: [question, scope]
+      properties:
+        question: { type: string, minLength: 1 }
+        scope: { $ref: "#/components/schemas/QAScope" }
+        mode: { type: string, enum: [qa, compare], default: qa }
+        session_id: { type: [string, "null"], format: uuid }
+
+    QAAnswer:
+      type: object
+      required: [answer, citations, refused]
+      properties:
+        answer: { type: string }
+        citations:
+          type: array
+          items:
+            type: object
+            properties:
+              marker: { type: string }
+              anchor: { $ref: "#/components/schemas/Anchor" }
+              quote: { type: string, maxLength: 200 }
+        refused: { type: boolean }
+        flags:
+          type: array
+          items:
+            type: object
+            properties:
+              kind: { type: string, enum: [invalid_citation, ungrounded_number, uncited_claim, weak_support] }
+              text: { type: string }
+
+    CompareTable:
+      type: object
+      properties:
+        dimensions:
+          type: array
+          items: { type: string }
+        table:
+          type: array
+          items:
+            type: object
+            properties:
+              dimension: { type: string }
+              cells:
+                type: object
+                additionalProperties:
+                  type: object
+                  properties:
+                    text: { type: string }
+                    citations:
+                      type: array
+                      items: { $ref: "#/components/schemas/Anchor" }
+        summary: { type: string }
+        flags:
+          type: array
+          items: { type: object, additionalProperties: true }
+
+    TranslationRequest:
+      type: object
+      required: [text, direction]
+      properties:
+        text: { type: string }
+        block_id: { type: [string, "null"] }
+        direction: { type: string, enum: [en2zh, zh2en] }
+
+    TranslationResult:
+      type: object
+      required: [text, direction]
+      properties:
+        text: { type: string }
+        direction: { type: string }
+        cached: { type: boolean }
+
+    ScholarHit:
+      type: object
+      required: [title, source]
+      properties:
+        title: { type: string }
+        authors:
+          type: array
+          items: { type: string }
+        year: { type: [integer, "null"] }
+        abstract: { type: [string, "null"] }
+        arxiv_id: { type: [string, "null"] }
+        doi: { type: [string, "null"] }
+        pdf_url: { type: [string, "null"] }
+        github_url: { type: [string, "null"] }
+        stars: { type: [integer, "null"] }
+        citation_count: { type: [integer, "null"] }
+        source: { type: string }
+
+    Recommendation:
+      type: object
+      required: [paper_id, score, reasons]
+      properties:
+        paper_id: { type: string }
+        title: { type: string }
+        authors:
+          type: array
+          items: { type: string }
+        year: { type: [integer, "null"] }
+        score: { type: number }
+        reasons:
+          type: array
+          items: { type: string }
+        github_url: { type: [string, "null"] }
+        stars: { type: [integer, "null"] }
+
+    TrackingConfig:
+      type: object
+      properties:
+        categories:
+          type: array
+          items: { type: string }
+        keywords:
+          type: array
+          items: { type: string }
+        cron: { type: string }
+
+    GraphNode:
+      type: object
+      required: [id, title, role]
+      properties:
+        id: { type: string }
+        title: { type: string }
+        year: { type: [integer, "null"] }
+        role: { type: string, enum: [cornerstone, middle, peripheral] }
+        pagerank: { type: number }
+        in_degree: { type: integer }
+        out_degree: { type: integer }
+        betweenness: { type: number }
+        reason: { type: string }
+
+    GraphEdge:
+      type: object
+      required: [source, target]
+      properties:
+        source: { type: string }
+        target: { type: string }
+        method: { type: string, enum: [doi, arxiv_id, title, raw_prefix] }
+        confidence: { type: number }
+        contexts:
+          type: array
+          items: { type: string }
+
+    Graph:
+      type: object
+      required: [id, nodes, edges]
+      properties:
+        id: { type: string, format: uuid }
+        nodes:
+          type: array
+          items: { $ref: "#/components/schemas/GraphNode" }
+        edges:
+          type: array
+          items: { $ref: "#/components/schemas/GraphEdge" }
+        metrics: { type: object, additionalProperties: true }
+
+    FutureWorkItem:
+      type: object
+      required: [idea, status]
+      properties:
+        idea: { type: string }
+        status: { type: string, enum: [open, partially_solved, solved, unknown] }
+        source_quote: { type: string }
+        anchor: { $ref: "#/components/schemas/Anchor" }
+        evidence:
+          type: array
+          items:
+            type: object
+            properties:
+              doc_id: { type: string, format: uuid }
+              anchor: { $ref: "#/components/schemas/Anchor" }
+              reason: { type: string }
+
+    OutlineRequest:
+      type: object
+      required: [idea]
+      properties:
+        idea: { type: string, minLength: 1 }
+        language: { type: string, enum: [en, zh], default: zh }
+        venue: { type: [string, "null"] }
+
+    ReferenceCheck:
+      type: object
+      required: [title, status]
+      properties:
+        title: { type: string }
+        status: { type: string, enum: [verified, unverified] }
+        source_url: { type: [string, "null"] }
+        arxiv_id: { type: [string, "null"] }
+        doi: { type: [string, "null"] }
+
+    FigureRequest:
+      type: object
+      required: [kind, description]
+      properties:
+        kind: { type: string, enum: [mermaid, graphviz, tikz, matplotlib] }
+        description: { type: string, minLength: 1 }
+
+    FigureResult:
+      type: object
+      properties:
+        kind: { type: string }
+        script: { type: string }
+        rendered: { type: [string, "null"] }
+        errors:
+          type: array
+          items: { type: string }
+
+    Dataset:
+      type: object
+      required: [id, columns, row_count]
+      properties:
+        id: { type: string, format: uuid }
+        filename: { type: string }
+        row_count: { type: integer }
+        columns:
+          type: array
+          items:
+            type: object
+            properties:
+              name: { type: string }
+              dtype: { type: string }
+              missing_rate: { type: number }
+        preview:
+          type: array
+          items: { type: object, additionalProperties: true }
+
+    ChartRequest:
+      type: object
+      required: [type, x, y]
+      properties:
+        type: { type: string, enum: [table, line, bar, radar, radar3d] }
+        x: { type: string }
+        y:
+          type: array
+          items: { type: string }
+
+    ChartResult:
+      type: object
+      required: [image_url, stats, caption]
+      properties:
+        image_url: { type: string }
+        script: { type: string }
+        stats: { type: object, additionalProperties: true }
+        caption: { type: string }
+        caption_zh: { type: string }
+
+  responses:
+    ClientError:
+      description: Error envelope (H17)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+paths:
+  /documents:
+    get:
+      summary: List documents
+      security: [{ UserHeader: [] }]
+      parameters:
+        - { name: query, in: query, schema: { type: string } }
+        - { name: tag, in: query, schema: { type: string } }
+        - { name: status, in: query, schema: { type: string } }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: Page of documents
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DocumentPage" }
+        "4XX":
+          $ref: "#/components/responses/ClientError"
+    post:
+      summary: Upload one or more PDFs
+      security: [{ UserHeader: [] }]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [files]
+              properties:
+                files:
+                  type: array
+                  items: { type: string, format: binary }
+      responses:
+        "202":
+          description: Accepted for parsing
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/UploadResult" }
+        "4XX":
+          $ref: "#/components/responses/ClientError"
+
+  /documents/{id}:
+    get:
+      summary: Document detail with parse statistics
+      security: [{ UserHeader: [] }]
+      parameters: [{ $ref: "#/components/parameters/DocId" }]
+      responses:
+        "200":
+          description: Document
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Document" }
+        "4XX":
+          $ref: "#/components/responses/ClientError"
+    patch:
+      summary: Rename or retag
+      security: [{ UserHeader: [] }]
+      parameters: [{ $ref: "#/components/parameters/DocId" }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title: { type: string }
+                tags:
+                  type: array
+                  items: { type: string }
+      responses:
+        "200":
+          description: Updated document
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Document" }
+        "4XX":
+          $ref: "#/components/responses/ClientError"
+    delete:
+      summary: Delete document, its index and its files
+      security: [{ UserHeader: [] }]
+      parameters: [{ $ref: "#/components/parameters/DocId" }]
+      responses:
+        "204": { description: Deleted }
+        "4XX":
+          $ref: "#/components/responses/ClientError"
+
+  /documents/{id}/file:
+    get:
+      summary: PDF stream (supports HTTP Range)
+      parameters: [{ $ref: "#/components/parameters/DocId" }]
+      responses:
+        "200":
+          description: PDF bytes
+          content:
+            application/pdf:
+              schema: { type: string, format: binary }
+        "206":
+          description: Partial content
+        "4XX":
+          $ref: "#/components/responses/ClientError"
+
+  /documents/{id}/structure:
+    get:
+      summary: meta + outline + references overview
+      parameters: [{ $ref: "#/components/parameters/DocId" }]
+      responses:
+        "200":
+          description: Structure
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  meta: { $ref: "#/components/schemas/DocMeta" }
+                  outline:
+                    type: array
+                    items: { $ref: "#/components/schemas/OutlineItem" }
+                  references:
+                    type: array
+                    items: { $ref: "#/components/schemas/Reference" }
+        "4XX":
+          $ref: "#/components/responses/ClientError"
+
+  /documents/{id}/pages/{n}/blocks:
+    get:
+      summary: All blocks on one page
+      parameters:
+        - $ref: "#/components/parameters/DocId"
+        - { name: n, in: path, required: true, schema: { type: integer, minimum: 1 } }
+      responses:
+        "200":
+          description: Blocks in reading order
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Block" }
+        "4XX":
+          $ref: "#/components/responses/ClientError"
+
+  /documents/{id}/assets/{asset_id}:
+    get:
+      summary: Cropped figure, table or formula image
+      parameters:
+        - $ref: "#/components/parameters/DocId"
+        - { name: asset_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Image bytes
+          content:
+            image/png:
+              schema: { type: string, format: binary }
+        "4XX":
+          $ref: "#/components/responses/ClientError"
+
+  /documents/{id}/dedup/resolve:
+    post:
+      summary: Resolve a duplicate warning
+      security: [{ UserHeader: [] }]
+      parameters: [{ $ref: "#/components/parameters/DocId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action: { type: string, enum: [keep_existing, replace, keep_both] }
+                target_id: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Resulting document
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Document" }
+        "4XX":
+          $ref: "#/components/responses/ClientError"
+
+  /documents/{id}/versions/diff:
+    get:
+      summary: Section-level diff plus a <=200 character summary
+      parameters:
+        - $ref: "#/components/parameters/DocId"
+        - { name: other, in: query, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Diff
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VersionDiff" }
+        "4XX":
+          $ref: "#/components/responses/ClientError"
+
+  /documents/{id}/citations:
+    get:
+      summary: Citation marker to reference mapping with bboxes
+      parameters: [{ $ref: "#/components/parameters/DocId" }]
+      responses:
+        "200":
+          description: Citations
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Citation" }
+        "4XX":
+          $ref: "#/components/responses/ClientError"
+
+  /documents/{id}/references:
+    get:
+      summary: References with worth scores and reasons
+      parameters: [{ $ref: "#/components/parameters/DocId" }]
+      responses:
+        "200":
+          description: References
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Reference" }
+        "4XX":
+          $ref: "#/components/responses/ClientError"
+
+  /documents/{id}/translate:
+    post:
+      summary: Create a full-document translation job
+      parameters: [{ $ref: "#/components/parameters/DocId" }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                format: { type: string, enum: [md, html], default: md }
+      responses:
+        "202":
+          description: Job accepted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Job" }
+        "4XX":
+          $ref: "#/components/responses/ClientError"
+
+  /documents/{id}/translation:
+    get:
+      summary: Block-aligned translation for side-by-side reading
+      parameters: [{ $ref: "#/components/parameters/DocId" }]
+      responses:
+        "200":
+          description: Per-block translations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    block_id: { type: string }
+                    source: { type: string }
+                    translated: { type: string }
+        "4XX":
+          $ref: "#/components/responses/ClientError"
+
+  /jobs/{id}:
+    get:
+      summary: Job status
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Job
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Job" }
+        "4XX":
+          $ref: "#/components/responses/ClientError"
+
+  /jobs/stream:
+    get:
+      summary: SSE stream of job progress
+      parameters:
+        - { name: job_id, in: query, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Server-sent events
+          content:
+            text/event-stream:
+              schema: { type: string }
+
+  /qa:
+    post:
+      summary: Ask a question (SSE) — qa or compare mode
+      security: [{ UserHeader: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/QARequest" }
+      responses:
+        "200":
+          description: SSE events token / anchor / done / error
+          content:
+            text/event-stream:
+              schema: { type: string }
+        "4XX":
+          $ref: "#/components/responses/ClientError"
+
+  /anchors/{block_id}:
+    get:
+      summary: Anchor preview payload for hover cards
+      parameters:
+        - { name: block_id, in: path, required: true, schema: { type: string } }
+        - { name: doc_id, in: query, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Anchor with text
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/Anchor" }
+                  - type: object
+                    properties:
+                      text: { type: string }
+                      doc_title: { type: string }
+        "4XX":
+          $ref: "#/components/responses/ClientError"
+
+  /translate/selection:
+    post:
+      summary: Translate a selection
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TranslationRequest" }
+      responses:
+        "200":
+          description: Translation
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TranslationResult" }
+        "4XX":
+          $ref: "#/components/responses/ClientError"
+
+  /translate/zh2en:
+    post:
+      summary: Academic Chinese to English translation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TranslationRequest" }
+      responses:
+        "200":
+          description: Translation
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TranslationResult" }
+        "4XX":
+          $ref: "#/components/responses/ClientError"
+
+  /discover/search:
+    post:
+      summary: Search arXiv, Semantic Scholar and OpenAlex
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query]
+              properties:
+                query: { type: string, minLength: 1 }
+                limit: { type: integer, minimum: 1, maximum: 50, default: 10 }
+      responses:
+        "200":
+          description: Candidate papers
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ScholarHit" }
+        "4XX":
+          $ref: "#/components/responses/ClientError"
+
+  /discover/fetch:
+    post:
+      summary: Download and ingest a discovered paper
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [source, ext_id]
+              properties:
+                source: { type: string }
+                ext_id: { type: string }
+      responses:
+        "202":
+          description: Job accepted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Job" }
+        "4XX":
+          $ref: "#/components/responses/ClientError"
+
+  /discover/references/import:
+    post:
+      summary: Batch import a document's references
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [doc_id]
+              properties:
+                doc_id: { type: string, format: uuid }
+                min_score: { type: number, minimum: 0, maximum: 100 }
+      responses:
+        "202":
+          description: Job accepted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Job" }
+        "4XX":
+          $ref: "#/components/responses/ClientError"
+
+  /recommendations:
+    get:
+      summary: Personalised recommendation feed
+      security: [{ UserHeader: [] }]
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+      responses:
+        "200":
+          description: Recommendations
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Recommendation" }
+        "4XX":
+          $ref: "#/components/responses/ClientError"
+
+  /recommendations/{paper_id}/feedback:
+    post:
+      summary: Thumbs up or down
+      security: [{ UserHeader: [] }]
+      parameters:
+        - { name: paper_id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [value]
+              properties:
+                value: { type: integer, enum: [1, -1] }
+      responses:
+        "204": { description: Recorded }
+        "4XX":
+          $ref: "#/components/responses/ClientError"
+
+  /tracking/config:
+    get:
+      summary: Read tracking configuration
+      security: [{ UserHeader: [] }]
+      responses:
+        "200":
+          description: Config
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TrackingConfig" }
+        "4XX":
+          $ref: "#/components/responses/ClientError"
+    put:
+      summary: Update tracking configuration
+      security: [{ UserHeader: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TrackingConfig" }
+      responses:
+        "200":
+          description: Config
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TrackingConfig" }
+        "4XX":
+          $ref: "#/components/responses/ClientError"
+
+  /tracking/run:
+    post:
+      summary: Trigger an arXiv fetch now
+      security: [{ UserHeader: [] }]
+      responses:
+        "202":
+          description: Job accepted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Job" }
+        "4XX":
+          $ref: "#/components/responses/ClientError"
+
+  /graphs:
+    post:
+      summary: Build a citation graph for a set of documents
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [doc_ids]
+              properties:
+                doc_ids:
+                  type: array
+                  minItems: 2
+                  items: { type: string, format: uuid }
+      responses:
+        "202":
+          description: Job accepted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Job" }
+        "4XX":
+          $ref: "#/components/responses/ClientError"
+
+  /graphs/{id}:
+    get:
+      summary: Graph with roles and metrics
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Graph
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Graph" }
+        "4XX":
+          $ref: "#/components/responses/ClientError"
+
+  /graphs/{id}/survey:
+    post:
+      summary: Generate a survey (SSE) with anchored claims
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: SSE stream
+          content:
+            text/event-stream:
+              schema: { type: string }
+        "4XX":
+          $ref: "#/components/responses/ClientError"
+
+  /graphs/{id}/future-work:
+    post:
+      summary: Extract and classify future-work items
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Items
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/FutureWorkItem" }
+        "4XX":
+          $ref: "#/components/responses/ClientError"
+
+  /writing/outline:
+    post:
+      summary: Generate a paper outline (SSE) with verified references
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OutlineRequest" }
+      responses:
+        "200":
+          description: SSE stream
+          content:
+            text/event-stream:
+              schema: { type: string }
+        "4XX":
+          $ref: "#/components/responses/ClientError"
+
+  /writing/references/verify:
+    post:
+      summary: Verify candidate references against external databases
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [titles]
+              properties:
+                titles:
+                  type: array
+                  items: { type: string }
+      responses:
+        "200":
+          description: Verification results
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ReferenceCheck" }
+        "4XX":
+          $ref: "#/components/responses/ClientError"
+
+  /writing/drafts/{id}/bibtex:
+    get:
+      summary: BibTeX containing verified entries only
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: BibTeX
+          content:
+            text/plain:
+              schema: { type: string }
+        "4XX":
+          $ref: "#/components/responses/ClientError"
+
+  /figures/generate:
+    post:
+      summary: Generate a figure script
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FigureRequest" }
+      responses:
+        "200":
+          description: Script
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FigureResult" }
+        "4XX":
+          $ref: "#/components/responses/ClientError"
+
+  /figures/run:
+    post:
+      summary: Run a figure script in the sandbox
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, script]
+              properties:
+                kind: { type: string }
+                script: { type: string }
+      responses:
+        "200":
+          description: Render result or structured errors
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FigureResult" }
+        "4XX":
+          $ref: "#/components/responses/ClientError"
+
+  /data/upload:
+    post:
+      summary: Upload a CSV and get column info plus a preview
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        "200":
+          description: Dataset
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Dataset" }
+        "4XX":
+          $ref: "#/components/responses/ClientError"
+
+  /data/{id}/chart:
+    post:
+      summary: Render a chart with computed stats and a caption
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ChartRequest" }
+      responses:
+        "200":
+          description: Chart
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChartResult" }
+        "4XX":
+          $ref: "#/components/responses/ClientError"
