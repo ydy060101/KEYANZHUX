@@ -18,9 +18,9 @@ command passes and its commit exists.
 
 | Card | Status | Notes |
 |---|---|---|
-| T1.1 Job system | not started | |
+| T1.1 Job system | complete | `jobs` table + arq + in-process fallback; cancel/retry; SSE `/jobs/stream`. 15 pytest. |
 | T1.2 Upload and CRUD | not started | |
-| T1.3 Vector parsing | not started | |
+| T1.3 Vector parsing | complete | Stages 1-3/5 with anchored metadata; verified on Transformer (8 authors), BERT (4), GPT-3 (31). 6 pytest. |
 | T1.4 Semantic dedup | not started | |
 | T1.5 Version diff | not started | |
 | T1.6 Library page on real API | not started | |

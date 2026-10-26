@@ -33,6 +33,17 @@ def get_engine() -> AsyncEngine:
     )
 
 
+def use_database(url: str) -> None:
+    """Point the process at another database (tests, maintenance tasks).
+
+    Cached engines and factories are discarded; existing sessions keep the
+    engine they were created with.
+    """
+    get_settings().database_url = url
+    get_engine.cache_clear()
+    get_session_factory.cache_clear()
+
+
 @lru_cache(maxsize=1)
 def get_session_factory() -> async_sessionmaker[AsyncSession]:
     return async_sessionmaker(get_engine(), expire_on_commit=False, autoflush=False)

@@ -83,10 +83,15 @@ asyncio.run(main())
     }
 
     "accept" {
-        & $PSCommandPath lint
-        & $PSCommandPath typecheck
-        & $PSCommandPath test
-        & $PSCommandPath build
+        # Each step runs as a child script; `exit` there only sets
+        # $LASTEXITCODE, so check it before continuing.
+        foreach ($step in "lint", "typecheck", "test", "build") {
+            & $PSCommandPath $step
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "`nACCEPTANCE FAILED at $step" -ForegroundColor Red
+                exit $LASTEXITCODE
+            }
+        }
         Write-Host "`nALL GREEN" -ForegroundColor Green
     }
 

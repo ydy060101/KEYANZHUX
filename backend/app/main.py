@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
 from .errors import AppError, app_error_handler, unhandled_error_handler
+from .logging_setup import configure_logging
 
 logger = logging.getLogger(__name__)
 
@@ -18,10 +19,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
-    logging.basicConfig(
-        level=settings.log_level,
-        format='{"level":"%(levelname)s","logger":"%(name)s","msg":"%(message)s"}',
-    )
+    configure_logging(settings.log_level)
     logger.info("starting api")
     try:
         yield
@@ -51,6 +49,12 @@ def create_app() -> FastAPI:
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:
         return {"status": "ok"}
+
+    from .api import jobs as jobs_api
+    from .workers import register_all
+
+    register_all()
+    app.include_router(jobs_api.router, prefix=settings.api_prefix)
 
     return app
 
