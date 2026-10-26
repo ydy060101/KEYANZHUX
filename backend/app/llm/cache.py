@@ -8,9 +8,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import time
 from collections import OrderedDict
 from typing import Any, Protocol
+
+from redis.exceptions import RedisError
+
+logger = logging.getLogger(__name__)
 
 
 def cache_key(model: str, messages: list[dict[str, str]], extra: dict[str, Any]) -> str:
@@ -58,18 +63,51 @@ class MemoryCache:
 
 
 class RedisCache:
+    """Redis-backed cache that degrades to memory instead of failing a call (H08).
+
+    Redis is optional infrastructure: if it is down the request must still reach
+    the provider, so connection errors count as a miss and repeated failures
+    switch the backend to `MemoryCache` for the rest of the process.
+    """
+
+    MAX_FAILURES = 3
+
     def __init__(self, url: str, prefix: str = "llm:") -> None:
         from redis.asyncio import Redis
 
         self._client = Redis.from_url(url, decode_responses=True)
         self._prefix = prefix
+        self._failures = 0
+        self._fallback: MemoryCache | None = None
+
+    def _degrade(self, exc: Exception) -> None:
+        self._failures += 1
+        logger.warning("llm cache redis error (%s/%s): %s", self._failures, self.MAX_FAILURES, exc)
+        if self._failures >= self.MAX_FAILURES and self._fallback is None:
+            logger.warning("llm cache switched to memory after repeated redis errors")
+            self._fallback = MemoryCache()
 
     async def get(self, key: str) -> str | None:
-        value = await self._client.get(self._prefix + key)
+        if self._fallback is not None:
+            return await self._fallback.get(key)
+        try:
+            value = await self._client.get(self._prefix + key)
+        except (RedisError, OSError) as exc:
+            self._degrade(exc)
+            return None
         return value if isinstance(value, str) else None
 
     async def set(self, key: str, value: str, ttl_s: int) -> None:
-        await self._client.set(self._prefix + key, value, ex=ttl_s)
+        if self._fallback is not None:
+            await self._fallback.set(key, value, ttl_s)
+            return
+        try:
+            await self._client.set(self._prefix + key, value, ex=ttl_s)
+        except (RedisError, OSError) as exc:
+            self._degrade(exc)
 
     async def close(self) -> None:
-        await self._client.aclose()
+        try:
+            await self._client.aclose()
+        except (RedisError, OSError) as exc:  # pragma: no cover - shutdown path
+            logger.debug("llm cache close skipped: %s", exc)

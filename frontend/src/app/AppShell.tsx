@@ -13,6 +13,9 @@ import {
 import { useEffect } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 
+import { AgentDrawer, CommandPalette, JobCenterPanel } from "@/design/Overlays";
+import { JobCenterTrigger } from "@/design/JobCenterTrigger";
+import { useUi } from "@/app/ui";
 import { cn } from "@/lib/cn";
 import { useTheme, type ThemeMode } from "@/design/theme";
 
@@ -50,6 +53,7 @@ function ThemeToggle() {
 
 export function AppShell() {
   const init = useTheme((s) => s.init);
+  const setCommandOpen = useUi((s) => s.setCommandOpen);
   const location = useLocation();
 
   useEffect(() => {
@@ -94,6 +98,9 @@ export function AppShell() {
         <header className="flex h-[var(--topbar-height)] shrink-0 items-center gap-3 border-b border-border bg-surface px-4">
           <button
             type="button"
+            onClick={() => {
+              setCommandOpen(true);
+            }}
             aria-label="全局搜索（⌘K）"
             className="flex h-9 min-w-0 flex-1 max-w-[420px] items-center gap-2 rounded-control border border-border bg-surface-2 px-3 text-[var(--text-sm)] text-ink-2 transition-colors duration-[--dur-fast] hover:text-ink"
           >
@@ -102,6 +109,7 @@ export function AppShell() {
             <kbd className="ml-auto rounded border border-border px-1.5 py-0.5 text-[11px]">⌘K</kbd>
           </button>
           <div className="ml-auto flex items-center gap-1">
+            <JobCenterTrigger />
             <span className="flex items-center gap-1.5 rounded-control border border-border px-2 py-1 text-[var(--text-sm)] text-ink-2">
               <User className="size-3.5" strokeWidth={1.75} aria-hidden />
               default
@@ -110,10 +118,16 @@ export function AppShell() {
           </div>
         </header>
 
-        <main key={location.pathname} className="app-scroll flex-1">
-          <Outlet />
-        </main>
+        <div className="flex min-h-0 flex-1">
+          <main key={location.pathname} className="app-scroll min-w-0 flex-1">
+            <Outlet />
+          </main>
+          <AgentDrawer />
+        </div>
       </div>
+
+      <CommandPalette />
+      <JobCenterPanel />
     </div>
   );
 }

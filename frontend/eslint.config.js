@@ -21,6 +21,11 @@ export default tseslint.config(
       "@typescript-eslint/no-explicit-any": "error",
       "@typescript-eslint/no-floating-promises": "error",
       "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_" }],
+      // Returning void from a concise arrow is idiomatic in React event handlers.
+      "@typescript-eslint/no-confusing-void-expression": "off",
+      "@typescript-eslint/no-meaningless-void-operator": "off",
+      // Template literals in styles routinely interpolate numbers.
+      "@typescript-eslint/restrict-template-expressions": ["error", { allowNumber: true }],
       "no-console": ["error", { allow: ["warn", "error"] }],
     },
   },
