@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+*.egg-info/
+
+# Node
+node_modules/
+dist/
+playwright-report/
+test-results/
+
+# Runtime data and secrets
+.env
+.env.local
+data/pdf/
+data/parsed/
+data/translations/
+data/figures/
+data/uploads/
+.runtime/
+*.log
+
+# OS
+Thumbs.db
+.DS_Store
