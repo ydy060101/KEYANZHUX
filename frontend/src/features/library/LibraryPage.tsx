@@ -1,11 +1,21 @@
 import { FileText, MoreHorizontal, Search, Upload } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { Button } from "@/design/Button";
-import { EmptyState } from "@/design/States";
+import { EmptyState, ErrorState, Skeleton } from "@/design/States";
 import { cn } from "@/lib/cn";
-import { mockDocuments, type Document } from "@/mocks/data";
+import { USE_MOCK, mockDocuments } from "@/mocks/data";
+import {
+  useDeleteDocument,
+  useDocuments,
+  useResolveDedup,
+  useUploadDocuments,
+  type Document,
+  type LibraryQuery,
+} from "./api";
+import { DedupDialog, type DedupPrompt } from "./DedupDialog";
+import { useJobStream } from "./jobs";
 
 const STATUS_LABEL: Record<Document["status"], string> = {
   uploading: "上传中",
@@ -23,6 +33,13 @@ const STATUS_STYLE: Record<Document["status"], string> = {
   failed: "text-danger-text",
 };
 
+const STATUS_FILTERS = [
+  { value: "", label: "全部" },
+  { value: "ready", label: "已就绪" },
+  { value: "parsing", label: "解析中" },
+  { value: "failed", label: "失败" },
+] as const;
+
 type SourceKind = NonNullable<Document["source_kind"]>;
 const SOURCE_LABEL: Record<SourceKind, string> = {
   vector: "矢量",
@@ -33,16 +50,36 @@ const SOURCE_LABEL: Record<SourceKind, string> = {
 export function LibraryPage() {
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
+  const [status, setStatus] = useState("");
   const [view, setView] = useState<"card" | "table">("card");
   const [dragging, setDragging] = useState(false);
+  const [prompt, setPrompt] = useState<DedupPrompt | null>(null);
+  const [jobId, setJobId] = useState<string | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
 
-  const documents = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return mockDocuments;
-    return mockDocuments.filter(
-      (doc) => doc.title.toLowerCase().includes(q) || (doc.arxiv_id ?? "").includes(q),
-    );
-  }, [query]);
+  const filters: LibraryQuery = useMemo(
+    () => ({ query: query.trim(), status, tag: "" }),
+    [query, status],
+  );
+  const documentsQuery = useDocuments(filters);
+  const upload = useUploadDocuments();
+  const resolve = useResolveDedup();
+  const remove = useDeleteDocument();
+  useJobStream(jobId);
+
+  const documents = USE_MOCK ? mockDocuments : (documentsQuery.data?.items ?? []);
+  const error = upload.error ?? documentsQuery.error;
+
+  function submit(files: FileList | File[]) {
+    const list = Array.from(files).filter((file) => file.name.toLowerCase().endsWith(".pdf"));
+    if (list.length === 0) return;
+    upload.mutate(list, {
+      onSuccess: (outcome) => {
+        setPrompt(outcome.dedup);
+        setJobId(outcome.results[0]?.job_id ?? null);
+      },
+    });
+  }
 
   return (
     <div
@@ -51,12 +88,13 @@ export function LibraryPage() {
         event.preventDefault();
         setDragging(true);
       }}
-      onDragLeave={() => {
-        setDragging(false);
+      onDragLeave={(event) => {
+        if (event.currentTarget === event.target) setDragging(false);
       }}
       onDrop={(event) => {
         event.preventDefault();
         setDragging(false);
+        if (event.dataTransfer.files.length) submit(event.dataTransfer.files);
       }}
     >
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border px-6 py-3">
@@ -71,6 +109,24 @@ export function LibraryPage() {
             aria-label="搜索文献"
             className="w-full bg-transparent text-[var(--text-base)] text-ink outline-none placeholder:text-ink-2"
           />
+        </div>
+        <div className="flex rounded-control border border-border p-0.5" role="group" aria-label="状态筛选">
+          {STATUS_FILTERS.map((item) => (
+            <button
+              key={item.value || "all"}
+              type="button"
+              aria-pressed={status === item.value}
+              onClick={() => {
+                setStatus(item.value);
+              }}
+              className={cn(
+                "rounded-[6px] px-3 py-1 text-[var(--text-sm)]",
+                status === item.value ? "bg-surface-2 font-medium text-ink" : "text-ink-2 hover:text-ink",
+              )}
+            >
+              {item.label}
+            </button>
+          ))}
         </div>
         <div className="flex rounded-control border border-border p-0.5" role="group" aria-label="视图切换">
           {(["card", "table"] as const).map((mode) => (
@@ -90,28 +146,76 @@ export function LibraryPage() {
             </button>
           ))}
         </div>
-        <Button variant="primary">
+        <input
+          ref={fileInput}
+          type="file"
+          accept="application/pdf"
+          multiple
+          className="sr-only"
+          aria-label="选择 PDF 文件"
+          onChange={(event) => {
+            if (event.target.files) submit(event.target.files);
+            event.target.value = "";
+          }}
+        />
+        <Button
+          variant="primary"
+          loading={upload.isPending}
+          onClick={() => {
+            fileInput.current?.click();
+          }}
+        >
           <Upload className="size-4" aria-hidden />
           上传 PDF
         </Button>
       </div>
 
       <div className="app-scroll flex-1 px-6 py-5">
-        {documents.length === 0 ? (
-          <EmptyState
-            title="没有匹配的文献"
-            description="换一个关键词，或把 PDF 拖到此处开始解析。"
-            icon={<FileText className="size-6" aria-hidden />}
+        {error && (
+          <ErrorState
+            message={error instanceof Error ? error.message : "加载失败"}
+            onRetry={() => {
+              void documentsQuery.refetch();
+            }}
           />
-        ) : view === "card" ? (
+        )}
+
+        {!error && documentsQuery.isPending && !USE_MOCK && (
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-4">
+            {[0, 1, 2, 3].map((index) => (
+              <Skeleton key={index} className="h-[148px]" />
+            ))}
+          </div>
+        )}
+
+        {!error && !documentsQuery.isPending && documents.length === 0 && (
+          <EmptyState
+            title={query || status ? "没有匹配的文献" : "资料库还是空的"}
+            description={
+              query || status
+                ? "换一个关键词或清除筛选条件。"
+                : "把 PDF 拖到此处，或点击右上角上传；支持多文件，单文件 ≤ 200MB。"
+            }
+            icon={<FileText className="size-6" aria-hidden />}
+            action={
+              <Button
+                variant="primary"
+                onClick={() => {
+                  fileInput.current?.click();
+                }}
+              >
+                <Upload className="size-4" aria-hidden />
+                上传 PDF
+              </Button>
+            }
+          />
+        )}
+
+        {!error && documents.length > 0 && view === "card" && (
           <ul className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-4">
             {documents.map((doc) => (
               <li key={doc.id}>
-                <article
-                  className={cn(
-                    "group flex h-full flex-col gap-2 rounded-card border border-border bg-surface p-4 transition-shadow duration-[--dur-fast] hover:shadow-md",
-                  )}
-                >
+                <article className="group flex h-full flex-col gap-2 rounded-card border border-border bg-surface p-4 transition-shadow duration-[--dur-fast] hover:shadow-md">
                   <div className="flex items-start gap-2">
                     <h3 className="min-w-0 flex-1 text-[var(--text-base)] font-medium leading-snug text-ink">
                       {doc.title}
@@ -128,6 +232,8 @@ export function LibraryPage() {
                   </p>
                   <p className={cn("text-[var(--text-sm)]", STATUS_STYLE[doc.status])}>
                     {STATUS_LABEL[doc.status]}
+                    {doc.stats?.blocks ? ` · ${doc.stats.blocks} 块` : ""}
+                    {doc.stats?.references ? ` · ${doc.stats.references} 篇参考文献` : ""}
                   </p>
                   <div className="mt-auto flex items-center gap-2 pt-2">
                     <Button
@@ -150,8 +256,11 @@ export function LibraryPage() {
                     </Button>
                     <button
                       type="button"
-                      aria-label={`更多操作：${doc.title}`}
-                      className="ml-auto rounded p-1 text-ink-2 opacity-0 transition-opacity group-hover:opacity-100 hover:text-ink focus-visible:opacity-100"
+                      aria-label={`删除 ${doc.title}`}
+                      onClick={() => {
+                        remove.mutate(doc.id);
+                      }}
+                      className="ml-auto rounded p-1 text-ink-2 opacity-0 transition-opacity group-hover:opacity-100 hover:text-danger-text focus-visible:opacity-100"
                     >
                       <MoreHorizontal className="size-4" aria-hidden />
                     </button>
@@ -160,7 +269,9 @@ export function LibraryPage() {
               </li>
             ))}
           </ul>
-        ) : (
+        )}
+
+        {!error && documents.length > 0 && view === "table" && (
           <div className="overflow-hidden rounded-card border border-border bg-surface">
             <table className="w-full border-collapse text-[var(--text-sm)]">
               <thead>
@@ -187,6 +298,26 @@ export function LibraryPage() {
           </div>
         )}
       </div>
+
+      {prompt && (
+        <DedupDialog
+          prompt={prompt}
+          pending={resolve.isPending}
+          onDismiss={() => {
+            setPrompt(null);
+          }}
+          onResolve={(action) => {
+            resolve.mutate(
+              { docId: prompt.docId, action, targetId: prompt.info.matched_doc_id },
+              {
+                onSuccess: () => {
+                  setPrompt(null);
+                },
+              },
+            );
+          }}
+        />
+      )}
 
       {dragging && (
         <div className="pointer-events-none fixed inset-0 z-30 flex items-center justify-center bg-primary/10">

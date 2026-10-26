@@ -9,7 +9,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -86,6 +86,20 @@ class Settings(BaseSettings):
     @property
     def upload_max_bytes(self) -> int:
         return self.upload_max_mb * 1024 * 1024
+
+    @model_validator(mode="after")
+    def _anchor_paths(self) -> Settings:
+        """Resolve relative paths against the repo root.
+
+        The API, the worker and the tests run from different working
+        directories; without this `./.runtime/models` would point at a
+        different place in each and the model would be downloaded again.
+        """
+        if not self.model_dir.is_absolute():
+            self.model_dir = (REPO_ROOT / self.model_dir).resolve()
+        if not self.data_dir.is_absolute():
+            self.data_dir = (REPO_ROOT / self.data_dir).resolve()
+        return self
 
 
 @lru_cache(maxsize=1)

@@ -28,3 +28,6 @@ data/uploads/
 # OS
 Thumbs.db
 .DS_Store
+
+# Test artefacts
+frontend/e2e/screenshots/

@@ -287,6 +287,9 @@ components:
               title: { type: string }
               change: { type: string, enum: [added, removed, modified, unchanged] }
         summary: { type: string, maxLength: 200 }
+        comparable:
+          type: boolean
+          description: False when a version has no parsed sections yet (CR-003)
 
     QAScope:
       type: object

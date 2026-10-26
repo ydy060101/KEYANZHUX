@@ -235,7 +235,12 @@ async def store_fingerprint(
     vector = None
     embedder = embedder or _default_embedder()
     if embedder is not None:
-        vectors = await embedder.embed([_title_abstract(candidate.title, candidate.abstract)])
+        # `load=False`: a first model load can take minutes, and the parse job
+        # must not wait on it. The vector is filled in by the embedding backfill
+        # and L3 falls back to MinHash until then (H08).
+        vectors = await embedder.embed(
+            [_title_abstract(candidate.title, candidate.abstract)], load=False
+        )
         if vectors is not None and len(vectors):
             vector = [float(x) for x in vectors[0]]
 

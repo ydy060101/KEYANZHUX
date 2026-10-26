@@ -146,6 +146,10 @@ async def publish(job_id: str, payload: dict[str, Any]) -> None:
 async def enqueue(job_id: str) -> bool:
     """Hand the job to arq. Returns False when the worker pool is unreachable.
 
+    arq keys jobs by `_job_id` and refuses to enqueue one whose result key
+    still exists, which would silently swallow a retry. The stale keys are
+    cleared first so a retried job really runs again.
+
     The caller decides whether to run the job in-process instead; the API must
     keep working with Redis down (H08).
     """
@@ -155,6 +159,13 @@ async def enqueue(job_id: str) -> bool:
     try:
         from arq import create_pool
         from arq.connections import RedisSettings
+        from redis.asyncio import Redis
+
+        client = Redis.from_url(url, decode_responses=True)
+        try:
+            await client.delete(f"arq:result:{job_id}", f"arq:job:{job_id}")
+        finally:
+            await client.aclose()
 
         pool = await create_pool(RedisSettings.from_dsn(url))
         try:

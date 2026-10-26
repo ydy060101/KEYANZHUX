@@ -1798,6 +1798,8 @@ export interface components {
                 change?: "added" | "removed" | "modified" | "unchanged";
             }[];
             summary: string;
+            /** @description False when a version has no parsed sections yet (CR-003) */
+            comparable?: boolean;
         };
         QAScope: {
             /** @enum {string} */

@@ -227,6 +227,22 @@ async def version_diff(
     await _load(session, doc_id)
     await _load(session, other)
 
+    # A version with no parsed sections cannot be compared: every section of the
+    # other side would look removed, and "no changes" would be equally false.
+    # Report that plainly instead of inventing a diff (CR-003).
+    parsed = {
+        key: bool(await session.scalar(select(BlockRow.id).where(BlockRow.doc_id == key).limit(1)))
+        for key in (doc_id, other)
+    }
+    if not all(parsed.values()):
+        return {
+            "other_id": other,
+            "stats": {},
+            "sections": [],
+            "summary": "两版本文档尚未解析完成，暂时无法比较章节变化；解析完成后再查看。",
+            "comparable": False,
+        }
+
     stats, _raw, changes = await diff_mod.compare(session, doc_id, other)
     summary = await diff_mod.summarise(stats, changes, get_gateway())
     return {
@@ -234,6 +250,7 @@ async def version_diff(
         "stats": stats,
         "sections": changes,
         "summary": summary,
+        "comparable": True,
     }
 
 

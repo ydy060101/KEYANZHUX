@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from typing import Any
 
 import numpy as np
@@ -17,6 +18,17 @@ import numpy as np
 from ..config import get_settings
 
 logger = logging.getLogger(__name__)
+
+
+def _apply_hf_env() -> None:
+    """Point huggingface_hub at the configured mirror before it is imported.
+
+    Without this a machine that cannot reach huggingface.co stalls on the
+    first model load instead of using the mirror (H08: degrade, don't hang).
+    """
+    endpoint = get_settings().hf_endpoint
+    if endpoint:
+        os.environ.setdefault("HF_ENDPOINT", endpoint)
 
 
 class Embedder:
@@ -56,6 +68,8 @@ class Embedder:
         return True
 
     def _load(self) -> Any:
+        _apply_hf_env()
+
         from sentence_transformers import SentenceTransformer
 
         kwargs: dict[str, Any] = {}
@@ -119,6 +133,7 @@ class Embedder:
             if self._reranker_error is not None:
                 return None
             try:
+                _apply_hf_env()
                 from sentence_transformers import CrossEncoder
 
                 kwargs: dict[str, Any] = {}

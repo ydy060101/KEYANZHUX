@@ -164,6 +164,9 @@ async def persist_parse(session: AsyncSession, model: DocumentModel) -> None:
     doc.source_kind = model.source_kind
     doc.status = "ready"
     await session.flush()
+    # This function owns its transaction: closing the session without a commit
+    # would silently discard every row above while the job still reports success.
+    await session.commit()
 
 
 register_handler("parse", parse_document)

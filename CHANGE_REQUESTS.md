@@ -28,3 +28,20 @@ contract stays unchanged until a human approves it (AGENTS.md §2.3).
   `--success-text`) are added for text use, so the 4.5:1 requirement in 02 §5 is
   met without changing the specified palette.
 - **Status:** Applied in T0.4. Awaiting human approval.
+
+## CR-003 — `VersionDiff` needs a `comparable` flag
+
+- **Request:** Add an optional boolean `comparable` to `VersionDiff` in
+  `openapi.yaml`.
+- **Reason:** When either version has not finished parsing, `diff_sections`
+  finds no sections and every count is zero. The summary then read "两版本间无
+  任何变化", which is false: the documents were simply not comparable yet. The
+  client cannot tell the two cases apart from the existing fields, because an
+  empty `sections` array is also the correct result for two identical parsed
+  versions.
+- **Impact:** Additive and optional; existing clients ignore it. `summary` stays
+  within its 200-character limit and keeps the same grounding rules.
+- **Proposal:** Add `comparable: { type: boolean }` to `VersionDiff`; when it is
+  false the summary says the comparison is not yet possible instead of claiming
+  no changes.
+- **Status:** Applied in T1.6. Awaiting human approval.

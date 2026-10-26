@@ -229,3 +229,22 @@ async def test_resolve_rejects_unknown_action(client: AsyncClient, session: Any)
     )
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "invalid_request"
+
+
+async def test_version_diff_of_unparsed_docs_is_not_reported_as_unchanged(
+    client: AsyncClient, session: Any
+) -> None:
+    """CR-003: no parsed sections means "cannot compare", never "no changes"."""
+    first = (await client.post("/api/v1/documents", files=_pdf_at(V7, "1706.03762v7.pdf"))).json()[0]
+    second = (await client.post("/api/v1/documents", files=_pdf_at(V1, "1706.03762v1.pdf"))).json()[0]
+
+    response = await client.get(
+        f"/api/v1/documents/{second['doc_id']}/versions/diff",
+        params={"other": first["doc_id"]},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["comparable"] is False
+    assert "尚未解析" in body["summary"]
+    assert "无任何变化" not in body["summary"]
+    assert body["sections"] == []

@@ -97,7 +97,8 @@ asyncio.run(main())
 
     "dev" {
         Start-Services
-        Start-Process -FilePath $Py -ArgumentList "-m", "uvicorn", "app.main:app", "--reload", "--port", "8000" -WorkingDirectory (Join-Path $Root "backend")
+        Start-Process -FilePath $Py -ArgumentList "run_server.py" -WorkingDirectory (Join-Path $Root "backend")
+        Start-Process -FilePath $Py -ArgumentList "-m", "app.worker" -WorkingDirectory (Join-Path $Root "backend")
         Push-Location (Join-Path $Root "frontend")
         try { & npx vite } finally { Pop-Location }
     }

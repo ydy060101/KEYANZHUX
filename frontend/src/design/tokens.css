@@ -1,6 +1,10 @@
 /* Design tokens — 02 §1. The only place colour, spacing, radius and motion are
    defined. Components must reference these variables, never literal values. */
 
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
 :root {
   --bg: #f7f8fb;
   --surface: #ffffff;
