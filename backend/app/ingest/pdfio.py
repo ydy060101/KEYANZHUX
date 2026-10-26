@@ -26,6 +26,10 @@ def open_document(path: Path) -> Document:
     return pymupdf.open(path)
 
 
+def open_document_bytes(data: bytes) -> Document:
+    return pymupdf.open(stream=data, filetype="pdf")
+
+
 def close_document(doc: Document) -> None:
     doc.close()
 

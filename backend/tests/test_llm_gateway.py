@@ -6,10 +6,11 @@ import json
 
 import httpx
 import pytest
+from pydantic import BaseModel
+
 from app.llm.cache import MemoryCache
 from app.llm.errors import LLMSchemaViolation, LLMUnavailable
 from app.llm.gateway import LLMGateway
-from pydantic import BaseModel
 
 
 class Person(BaseModel):

@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..config import get_settings
 from ..db import get_session_factory
 from ..ingest.metadata import extract_meta_llm
-from ..ingest.parser import detect_source_kind, extract_blocks, probe_pages
+from ..ingest.parser import detect_arxiv_id, detect_source_kind, extract_blocks, probe_pages
 from ..ingest.pdfio import close_document, open_document, page_count
 from ..llm.gateway import get_gateway
 from ..models.orm import Block as BlockRow
@@ -37,6 +37,7 @@ async def parse_document(job_id: str, payload: dict[str, Any]) -> dict[str, Any]
         if doc is None:
             raise ValueError(f"文档不存在：{doc_id}")
         path = Path(doc.file_path)
+        stored_sha = doc.sha256
         await JobService(session).progress(job_id, stage="probe", progress=0.05)
 
     settings = get_settings()
@@ -52,6 +53,8 @@ async def parse_document(job_id: str, payload: dict[str, Any]) -> dict[str, Any]
 
         meta = await extract_meta_llm(doc_handle, blocks, doc_id, get_gateway())
         total_pages = page_count(doc_handle)
+        first_text = blocks[0].text if blocks else ""
+        detected_arxiv, detected_version = detect_arxiv_id(path.name, first_text)
     except Exception:
         async with factory() as session:
             doc = await session.get(Document, doc_id)
@@ -64,20 +67,42 @@ async def parse_document(job_id: str, payload: dict[str, Any]) -> dict[str, Any]
 
     model = DocumentModel(
         doc_id=doc_id,
-        sha256="",
+        sha256=stored_sha,
         page_count=total_pages,
         source_kind=detect_source_kind(pages, settings.scanned_page_char_threshold),
         meta=meta,
         outline=outline,
         blocks=blocks,
+        arxiv_id=detected_arxiv,
+        version=detected_version,
     )
 
     async with factory() as session:
         await JobService(session).progress(job_id, stage="persist", progress=0.8)
         await persist_parse(session, model)
+        await _store_fingerprint(session, model)
 
     logger.info("parsed doc_id=%s blocks=%d pages=%d", doc_id, len(blocks), total_pages)
     return {"doc_id": doc_id, "blocks": len(blocks), "pages": total_pages}
+
+
+async def _store_fingerprint(session: AsyncSession, model: DocumentModel) -> None:
+    """Index the fingerprint L3 dedup compares against on the next upload."""
+    from ..dedup.service import Candidate, store_fingerprint
+
+    body = "\n".join(block.text for block in model.blocks if block.type != "reference")[:8000]
+    await store_fingerprint(
+        session,
+        model.doc_id,
+        Candidate(
+            sha256=model.sha256,
+            arxiv_id=model.arxiv_id,
+            version=model.version,
+            title=model.meta.title,
+            abstract=model.meta.abstract.text if model.meta.abstract else "",
+            body=body,
+        ),
+    )
 
 
 async def persist_parse(session: AsyncSession, model: DocumentModel) -> None:
@@ -104,7 +129,9 @@ async def persist_parse(session: AsyncSession, model: DocumentModel) -> None:
                 confidence=block.confidence,
             )
         )
-    doc.title = model.meta.title
+    doc.title = model.meta.title or doc.title
+    doc.arxiv_id = model.arxiv_id or doc.arxiv_id
+    doc.version = model.version or doc.version
     doc.page_count = model.page_count
     doc.source_kind = model.source_kind
     doc.status = "ready"

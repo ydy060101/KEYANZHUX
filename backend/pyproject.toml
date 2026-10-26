@@ -24,6 +24,7 @@ dependencies = [
     "numpy>=1.26,<3",
     "pandas>=2.2,<3",
     "python-dotenv>=1.0,<2",
+    "sentence-transformers>=3,<6",
 ]
 
 [project.optional-dependencies]
@@ -41,9 +42,14 @@ include = ["app*"]
 
 [tool.ruff]
 line-length = 120
+# The app package is first-party even though it is not installed at the root.
+
 target-version = "py311"
 src = ["app", "tests"]
 extend-exclude = ["migrations/versions"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "ASYNC"]
@@ -57,7 +63,7 @@ plugins = ["pydantic.mypy"]
 exclude = ["migrations"]
 
 [[tool.mypy.overrides]]
-module = ["fitz", "pymupdf", "pgvector.*", "arq.*", "redis.*"]
+module = ["fitz", "pymupdf", "pgvector.*", "arq.*", "redis.*", "sentence_transformers.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

@@ -53,11 +53,12 @@ def test_database_url() -> str:
 
 @pytest.fixture(scope="session", autouse=True)
 def _prepare_test_database(test_database_url: str) -> None:
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import create_async_engine
+
     from app import db
     from app.config import get_settings
     from app.models.orm import Base
-    from sqlalchemy import text
-    from sqlalchemy.ext.asyncio import create_async_engine
 
     configured = get_settings().database_url
     host, port, user, _dbname = _parts(configured)

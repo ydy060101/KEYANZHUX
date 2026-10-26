@@ -8,6 +8,7 @@ from typing import Any
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     DateTime,
     Float,
@@ -69,7 +70,8 @@ class DocFingerprint(Base):
     __tablename__ = "doc_fingerprints"
 
     doc_id: Mapped[str] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"), primary_key=True)
-    minhash: Mapped[list[int]] = mapped_column(ARRAY(Integer), default=list)
+    # 61-bit MinHash values do not fit in a 32-bit integer.
+    minhash: Mapped[list[int]] = mapped_column(ARRAY(BigInteger), default=list)
     title_abs_embedding: Mapped[Any | None] = mapped_column(Vector(1024))
     first_pages_text_hash: Mapped[str] = mapped_column(String(64), default="")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

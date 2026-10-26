@@ -7,9 +7,10 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from httpx import ASGITransport, AsyncClient
+
 from app.ingest import storage
 from app.main import create_app
-from httpx import ASGITransport, AsyncClient
 
 FIXTURE = Path(__file__).resolve().parent.parent / "fixtures" / "pdf" / "1706.03762v1.pdf"
 
@@ -48,7 +49,9 @@ async def test_upload_creates_document_and_job(client: AsyncClient, session: Any
 
     detail = await client.get(f"/api/v1/documents/{item['doc_id']}")
     assert detail.status_code == 200
-    assert detail.json()["title"] == "1706.03762v1"
+    assert detail.json()["title"] == "Attention Is All You Need"
+    assert detail.json()["arxiv_id"] == "1706.03762"
+    assert detail.json()["version"] == "v1"
 
 
 async def test_reupload_same_bytes_is_idempotent(client: AsyncClient, session: Any) -> None:
@@ -135,7 +138,7 @@ async def test_file_range_out_of_bounds(client: AsyncClient, session: Any) -> No
 
 async def test_list_filters_by_query_and_status(client: AsyncClient, session: Any) -> None:
     await client.post("/api/v1/documents", files=_pdf())
-    assert (await client.get("/api/v1/documents?query=1706")).json()["total"] == 1
+    assert (await client.get("/api/v1/documents?query=Attention")).json()["total"] == 1
     assert (await client.get("/api/v1/documents?query=nothing-here")).json()["total"] == 0
     assert (await client.get("/api/v1/documents?status=uploading")).json()["total"] == 1
     assert (await client.get("/api/v1/documents?status=ready")).json()["total"] == 0
@@ -146,3 +149,83 @@ async def test_list_filters_by_tag(client: AsyncClient, session: Any) -> None:
     await client.patch(f"/api/v1/documents/{doc_id}", json={"tags": ["nlp", "arch"]})
     assert (await client.get("/api/v1/documents?tag=nlp")).json()["total"] == 1
     assert (await client.get("/api/v1/documents?tag=vision")).json()["total"] == 0
+
+
+V7 = FIXTURE.parent / "1706.03762v7.pdf"
+V1 = FIXTURE
+
+
+def _pdf_at(path: Path, name: str) -> list[tuple[str, tuple[str, bytes, str]]]:
+    return [("files", (name, path.read_bytes(), "application/pdf"))]
+
+
+async def test_case_3_1_v7_then_v1_through_upload(client: AsyncClient, session: Any) -> None:
+    """04 §1 case 3.1 at the API boundary: v7 first, v1 second."""
+    first = (await client.post("/api/v1/documents", files=_pdf_at(V7, "1706.03762v7.pdf"))).json()[0]
+    assert first["dedup"] is None
+
+    second = (await client.post("/api/v1/documents", files=_pdf_at(V1, "1706.03762v1.pdf"))).json()[0]
+    dedup = second["dedup"]
+    assert dedup is not None, "the second upload must be flagged"
+    assert dedup["level"] == "same_paper_other_version"
+    assert dedup["matched_doc_id"] == first["doc_id"]
+    assert dedup["existing_version"] == "v7"
+    assert dedup["new_version"] == "v1"
+    assert dedup["suggestion"] == "keep_existing"
+    assert "较新" in dedup["reason"]
+
+
+async def test_case_3_1_rename_keeps_verdict(client: AsyncClient, session: Any) -> None:
+    await client.post("/api/v1/documents", files=_pdf_at(V7, "1706.03762v7.pdf"))
+    second = (
+        await client.post("/api/v1/documents", files=_pdf_at(V1, "completely_different_name.pdf"))
+    ).json()[0]
+    assert second["dedup"]["level"] == "same_paper_other_version"
+
+
+async def test_resolve_keep_existing_removes_new_upload(client: AsyncClient, session: Any) -> None:
+    first = (await client.post("/api/v1/documents", files=_pdf_at(V7, "1706.03762v7.pdf"))).json()[0]
+    second = (await client.post("/api/v1/documents", files=_pdf_at(V1, "1706.03762v1.pdf"))).json()[0]
+
+    response = await client.post(
+        f"/api/v1/documents/{second['doc_id']}/dedup/resolve",
+        json={"action": "keep_existing", "target_id": first["doc_id"]},
+    )
+    assert response.status_code == 200
+    assert response.json()["id"] == first["doc_id"]
+    assert (await client.get(f"/api/v1/documents/{second['doc_id']}")).status_code == 404
+    assert (await client.get(f"/api/v1/documents/{first['doc_id']}")).status_code == 200
+
+
+async def test_resolve_keep_both_keeps_two(client: AsyncClient, session: Any) -> None:
+    first = (await client.post("/api/v1/documents", files=_pdf_at(V7, "1706.03762v7.pdf"))).json()[0]
+    second = (await client.post("/api/v1/documents", files=_pdf_at(V1, "1706.03762v1.pdf"))).json()[0]
+
+    response = await client.post(
+        f"/api/v1/documents/{second['doc_id']}/dedup/resolve",
+        json={"action": "keep_both", "target_id": first["doc_id"]},
+    )
+    assert response.status_code == 200
+    assert (await client.get("/api/v1/documents")).json()["total"] == 2
+
+
+async def test_resolve_replace_removes_library_copy(client: AsyncClient, session: Any) -> None:
+    first = (await client.post("/api/v1/documents", files=_pdf_at(V7, "1706.03762v7.pdf"))).json()[0]
+    second = (await client.post("/api/v1/documents", files=_pdf_at(V1, "1706.03762v1.pdf"))).json()[0]
+
+    response = await client.post(
+        f"/api/v1/documents/{second['doc_id']}/dedup/resolve",
+        json={"action": "replace", "target_id": first["doc_id"]},
+    )
+    assert response.status_code == 200
+    assert response.json()["id"] == second["doc_id"]
+    assert (await client.get(f"/api/v1/documents/{first['doc_id']}")).status_code == 404
+
+
+async def test_resolve_rejects_unknown_action(client: AsyncClient, session: Any) -> None:
+    doc_id = (await client.post("/api/v1/documents", files=_pdf())).json()[0]["doc_id"]
+    response = await client.post(
+        f"/api/v1/documents/{doc_id}/dedup/resolve", json={"action": "delete_everything"}
+    )
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_request"

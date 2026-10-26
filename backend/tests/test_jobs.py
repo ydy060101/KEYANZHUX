@@ -7,10 +7,11 @@ import json
 from typing import Any
 
 import pytest
+from httpx import ASGITransport, AsyncClient
+
 from app.main import create_app
 from app.workers import queue
 from app.workers.registry import register_handler
-from httpx import ASGITransport, AsyncClient
 
 
 @pytest.fixture

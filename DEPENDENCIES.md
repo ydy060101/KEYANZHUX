@@ -31,6 +31,7 @@ New dependencies must be recorded here with their purpose and why the existing s
 | numpy | 2.4.0 | Vector math | Required by embedding and MinHash. |
 | pandas | 3.0.0 | CSV parsing and chart statistics | Fixed by the spec for the data workshop. |
 | python-dotenv | 1.2.4 | `.env` loading | pydantic-settings reads `.env` through it. |
+| sentence-transformers | 5.7.0 | Local bge-m3 embeddings and bge-reranker-v2-m3 | Fixed by the spec; no hosted endpoint serves these models. Pulls torch 2.14.1+cpu. |
 
 ## Backend tooling
 
@@ -76,6 +77,6 @@ New dependencies must be recorded here with their purpose and why the existing s
 ## Not yet added
 
 These are required by later cards and will be registered when their card starts:
-`sentence-transformers` or `onnxruntime` (bge-m3, bge-reranker), `rank_bm25`,
+`rank_bm25`,
 `paddleocr`, `minhash`, `sickle`, `APScheduler`, `networkx`, `scikit-learn`,
 `rapidfuzz`, `openpyxl`, `python-docx`.

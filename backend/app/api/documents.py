@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import mimetypes
 import re
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any
@@ -23,9 +25,21 @@ from ..models.orm import Document, ReferenceRow
 from ..models.schemas import BlockType
 from ..workers import queue
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(tags=["documents"])
 
 _RANGE_RE = re.compile(r"bytes=(\d*)-(\d*)")
+
+
+@dataclass
+class QuickSignals:
+    """What the upload path can learn about a PDF without parsing it."""
+
+    arxiv_id: str | None
+    version: str | None
+    title: str
+    body: str
 
 
 def _document_payload(doc: Document, stats: dict[str, int] | None = None) -> dict[str, Any]:
@@ -120,9 +134,13 @@ async def upload_documents(
             continue
 
         stored = storage.write_pdf(sha256, data)
+        signals = _quick_signals(filename, data)
+        dedup = await _detect_duplicate(session, signals, sha256)
         doc = Document(
             sha256=sha256,
-            title=Path(filename).stem,
+            title=signals.title or Path(filename).stem,
+            arxiv_id=signals.arxiv_id,
+            version=signals.version,
             status="uploading",
             file_path=str(stored),
             created_by=user,
@@ -137,7 +155,7 @@ async def upload_documents(
                 "doc_id": doc.id,
                 "job_id": job.id,
                 "status": doc.status,
-                "dedup": None,
+                "dedup": dedup.model_dump() if dedup else None,
             }
         )
 
@@ -148,6 +166,48 @@ async def upload_documents(
 
             asyncio.create_task(queue.run_in_background(item["job_id"]))
     return results
+
+
+@router.post("/documents/{doc_id}/dedup/resolve")
+async def resolve_dedup(doc_id: str, body: dict[str, Any], session: SessionDep) -> dict[str, Any]:
+    """Act on a duplicate warning (01 §8).
+
+    `keep_existing` discards the new upload, `replace` discards the library copy
+    in favour of the new one, and `keep_both` keeps both — which 01 §8 requires
+    to stay possible when the same content arrived in a different format.
+    """
+    action = body.get("action")
+    target_id = body.get("target_id")
+    if action not in {"keep_existing", "replace", "keep_both"}:
+        from ..errors import InvalidRequest
+
+        raise InvalidRequest("action 必须是 keep_existing / replace / keep_both", detail={"action": action})
+
+    doc = await _load(session, doc_id)
+
+    if action == "keep_both":
+        return _document_payload(doc)
+
+    if not target_id:
+        from ..errors import InvalidRequest
+
+        raise InvalidRequest("该操作需要 target_id", detail={"action": action})
+
+    other = await _load(session, str(target_id))
+    if action == "keep_existing":
+        # The new document goes away; the library copy stays untouched.
+        file_path = doc.file_path
+        await session.delete(doc)
+        await session.commit()
+        storage.remove_document(doc_id, file_path)
+        return _document_payload(other)
+
+    # replace: the new document survives, the old one and its files go.
+    file_path = other.file_path
+    await session.delete(other)
+    await session.commit()
+    storage.remove_document(other.id, file_path)
+    return _document_payload(doc)
 
 
 @router.get("/documents/{doc_id}")
@@ -254,4 +314,59 @@ async def _load(session: AsyncSession, doc_id: str) -> Document:
     if doc is None:
         raise NotFound("文档不存在", detail={"doc_id": doc_id})
     return doc
+
+
+def _quick_signals(filename: str, data: bytes) -> QuickSignals:
+    """arXiv id, version, title and opening text — read without a full parse.
+
+    The upload response must be fast, so dedup uses the filename for the id and
+    the first page's text for content. The parse job recomputes both properly.
+    """
+    from ..ingest.parser import ARXIV_RE, reading_order
+    from ..ingest.pdfio import close_document, open_document_bytes, page
+
+    arxiv_id: str | None = None
+    version: str | None = None
+    match = ARXIV_RE.search(filename)
+    if match:
+        arxiv_id, version = match.group(1), match.group(2)
+
+    title = Path(filename).stem
+    body = ""
+    try:
+        doc = open_document_bytes(data)
+        try:
+            first = page(doc, 0)
+            blocks = reading_order(first)
+            texts = [text.strip() for _, _, _, _, text in blocks if text.strip()]
+            if texts:
+                title = texts[0][:300]
+                body = "\n".join(texts[:12])
+            if arxiv_id is None:
+                # The arXiv stamp sits anywhere on page 1 (often in the margin),
+                # so search all of it rather than the leading blocks.
+                found = ARXIV_RE.search(" ".join(texts))
+                if found:
+                    arxiv_id, version = found.group(1), found.group(2)
+        finally:
+            close_document(doc)
+    except Exception:
+        # A PDF PyMuPDF cannot open yet is still accepted; the parse job will
+        # report the real failure. Dedup falls back to L1 on sha256 alone.
+        logger.warning("quick dedup signals unavailable for %s", filename)
+    return QuickSignals(arxiv_id=arxiv_id, version=version, title=title, body=body)
+
+
+async def _detect_duplicate(session: AsyncSession, signals: QuickSignals, sha256: str) -> Any:
+    from ..dedup.service import Candidate, check
+
+    candidate = Candidate(
+        sha256=sha256,
+        arxiv_id=signals.arxiv_id,
+        version=signals.version,
+        title=signals.title,
+        abstract="",
+        body=signals.body,
+    )
+    return await check(session, candidate, load_model=False)
 
