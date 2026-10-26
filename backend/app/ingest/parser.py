@@ -13,7 +13,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..models.schemas import (
-    Asset,
     Block,
     BlockType,
     Citation,
@@ -24,6 +23,7 @@ from ..models.schemas import (
     SourceKind,
 )
 from . import pdfio
+from .assets import extract_assets
 from .outline import build_outline
 
 logger = logging.getLogger(__name__)
@@ -406,7 +406,7 @@ def parse_pdf(path: Path, doc_id: str, *, threshold: int = 30, page_limit: int |
         first_text = blocks[0].text if blocks else ""
         arxiv_id, version = detect_arxiv_id(path.name, first_text)
         references, citations = extract_references(blocks, doc_id)
-        assets: list[Asset] = []
+        assets = extract_assets(doc, blocks, doc_id)
 
         model = DocumentModel(
             doc_id=doc_id,

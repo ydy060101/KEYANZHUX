@@ -133,6 +133,44 @@ def page_size(page: Page) -> tuple[float, float]:
     return float(page.rect.width), float(page.rect.height)
 
 
+def crop_png(page: Page, bbox: tuple[float, float, float, float], *, zoom: float = 2.0) -> bytes:
+    """Render one rectangle of a page as PNG bytes.
+
+    Used for figures, tables and formulas: the crop is the ground truth when
+    text extraction is unsure, so it is rendered at 2× for legibility.
+    """
+    clip = pymupdf.Rect(bbox[0], bbox[1], bbox[2], bbox[3])
+    matrix = pymupdf.Matrix(zoom, zoom)
+    pixmap = page.get_pixmap(matrix=matrix, clip=clip, alpha=False)
+    return bytes(pixmap.tobytes("png"))
+
+
+def image_boxes(page: Page) -> list[tuple[float, float, float, float]]:
+    """Bounding boxes of the raster images placed on a page."""
+    out: list[tuple[float, float, float, float]] = []
+    for info in page.get_image_info():
+        rect = info.get("bbox")
+        if rect is None:
+            continue
+        x0, y0, x1, y1 = (float(v) for v in rect)
+        if x1 - x0 > 8 and y1 - y0 > 8:
+            out.append((x0, y0, x1, y1))
+    return out
+
+
+def drawing_boxes(page: Page) -> list[tuple[float, float, float, float]]:
+    """Bounding boxes of vector drawings (diagrams drawn as paths)."""
+    out: list[tuple[float, float, float, float]] = []
+    for drawing in page.get_drawings():
+        rect = drawing.get("rect")
+        if rect is None:
+            continue
+        x0, y0, x1, y1 = float(rect.x0), float(rect.y0), float(rect.x1), float(rect.y1)
+        if x1 - x0 > 20 and y1 - y0 > 20:
+            out.append((x0, y0, x1, y1))
+    return out
+
+
 @dataclass
 class Bookmark:
     """One entry of the PDF's own outline, with the page it points at (1-based)."""

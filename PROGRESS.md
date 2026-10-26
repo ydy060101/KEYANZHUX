@@ -29,7 +29,7 @@ command passes and its commit exists.
 
 | Card | Status | Notes |
 |---|---|---|
-| T2.1 Heading tree | not started | |
+| T2.1 Heading tree | complete | Bookmarks first, font-size+numbering fallback with sequence validation, max 3 levels. Transformer 22 headings (3 levels), BERT 25 (rules only), GPT-3 32 — all matching the printed contents. 12 pytest. |
 | T2.2 Figures, tables, formulas | not started | |
 | T2.3 References and citation markers | not started | |
 | T2.4 Scanned OCR | not started | |

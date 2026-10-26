@@ -19,8 +19,8 @@ from ..ingest.metadata import extract_meta_llm
 from ..ingest.parser import detect_arxiv_id, detect_source_kind, extract_blocks, probe_pages
 from ..ingest.pdfio import close_document, open_document, page_count
 from ..llm.gateway import get_gateway
+from ..models.orm import AssetRow, CitationRow, Document, ReferenceRow
 from ..models.orm import Block as BlockRow
-from ..models.orm import CitationRow, Document, ReferenceRow
 from ..models.schemas import DocumentModel
 from .queue import JobService
 from .registry import register_handler
@@ -114,6 +114,7 @@ async def persist_parse(session: AsyncSession, model: DocumentModel) -> None:
     await session.execute(delete(BlockRow).where(BlockRow.doc_id == model.doc_id))
     await session.execute(delete(ReferenceRow).where(ReferenceRow.doc_id == model.doc_id))
     await session.execute(delete(CitationRow).where(CitationRow.doc_id == model.doc_id))
+    await session.execute(delete(AssetRow).where(AssetRow.doc_id == model.doc_id))
 
     for block in model.blocks:
         session.add(
@@ -155,6 +156,17 @@ async def persist_parse(session: AsyncSession, model: DocumentModel) -> None:
                 block_id=citation.block_id,
                 bbox=citation.bbox,
                 method=citation.method,
+            )
+        )
+    for asset in model.assets:
+        session.add(
+            AssetRow(
+                id=f"{model.doc_id}:{asset.id}",
+                doc_id=model.doc_id,
+                kind=asset.kind,
+                page=asset.page,
+                bbox=asset.bbox,
+                path=asset.path,
             )
         )
     doc.title = model.meta.title or doc.title

@@ -18,10 +18,11 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..deps import SessionDep, UserIdDep
+from ..errors import NotFound
 from ..ingest import storage
 from ..ingest.validate import validate_upload
+from ..models.orm import AssetRow, CitationRow, Document, ReferenceRow
 from ..models.orm import Block as BlockRow
-from ..models.orm import Document, ReferenceRow
 from ..models.schemas import BlockType
 from ..workers import queue
 
@@ -252,6 +253,138 @@ async def version_diff(
         "summary": summary,
         "comparable": True,
     }
+
+
+@router.get("/documents/{doc_id}/pages/{page_no}/blocks")
+async def page_blocks(doc_id: str, page_no: int, session: SessionDep) -> list[dict[str, Any]]:
+    """Every block on one page, in reading order (T2.2, T2.6)."""
+    await _load(session, doc_id)
+    rows = await session.scalars(
+        select(BlockRow)
+        .where(BlockRow.doc_id == doc_id, BlockRow.page == page_no)
+        .order_by(BlockRow.reading_order)
+    )
+    return [_block_payload(row) for row in rows]
+
+
+def _block_payload(row: BlockRow) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "type": row.type,
+        "page": row.page,
+        "bbox": list(row.bbox or []),
+        "reading_order": row.reading_order,
+        "section_id": row.section_id,
+        "text": row.text,
+        "latex": row.latex,
+        "html": row.html,
+        "asset_id": row.asset_id,
+        "lang": row.lang,
+        "confidence": row.confidence,
+    }
+
+
+@router.get("/documents/{doc_id}/assets/{asset_id}")
+async def get_asset(doc_id: str, asset_id: str, session: SessionDep) -> Response:
+    """The cropped figure, table or formula image (T2.2).
+
+    The crop is the fallback the reader shows when extracted structure is
+    uncertain, so it must always be served from the stored bytes.
+    """
+    await _load(session, doc_id)
+    asset = await session.get(AssetRow, f"{doc_id}:{asset_id}")
+    if asset is None:
+        raise NotFound("资源不存在", detail={"asset_id": asset_id})
+    path = Path(asset.path)
+    data = await asyncio.to_thread(path.read_bytes)
+    return Response(content=data, media_type="image/png", headers={"Cache-Control": "private, max-age=3600"})
+
+
+@router.get("/documents/{doc_id}/structure")
+async def get_structure(doc_id: str, session: SessionDep) -> dict[str, Any]:
+    """Metadata, heading tree and references in one call (T2.1, T2.6)."""
+    doc = await _load(session, doc_id)
+    blocks = await session.scalars(
+        select(BlockRow).where(BlockRow.doc_id == doc_id).order_by(BlockRow.reading_order)
+    )
+    outline = [
+        {
+            "id": block.section_id,
+            "level": _heading_level(block),
+            "title": block.text.strip()[:200],
+            "page": block.page,
+            "block_id": block.id,
+        }
+        for block in blocks
+        if block.type == "heading"
+    ]
+    references = await session.scalars(
+        select(ReferenceRow).where(ReferenceRow.doc_id == doc_id).order_by(ReferenceRow.index)
+    )
+    return {
+        "meta": {
+            "title": doc.title,
+            "authors": [],
+            "abstract": None,
+            "arxiv_id": doc.arxiv_id,
+            "version": doc.version,
+            "year": None,
+        },
+        "outline": outline,
+        "references": [_reference_payload(row) for row in references],
+    }
+
+
+def _heading_level(block: BlockRow) -> int:
+    """Recover the outline level from the section title's numbering."""
+    match = re.match(r"^(\d+(?:\.\d+)*)", block.text.strip())
+    if match is None:
+        return 1
+    return min(3, match.group(1).count(".") + 1)
+
+
+def _reference_payload(row: ReferenceRow) -> dict[str, Any]:
+    return {
+        "id": row.id.split(":", 1)[-1],
+        "index": row.index,
+        "raw": row.raw,
+        "title": row.title,
+        "authors": list(row.authors or []),
+        "year": row.year,
+        "doi": row.doi,
+        "arxiv_id": row.arxiv_id,
+        "block_id": row.block_id,
+        "bbox": list(row.bbox or []),
+    }
+
+
+@router.get("/documents/{doc_id}/citations")
+async def get_citations(doc_id: str, session: SessionDep) -> list[dict[str, Any]]:
+    """In-text markers mapped to reference ids, each with its anchor (T2.3)."""
+    await _load(session, doc_id)
+    rows = await session.scalars(
+        select(CitationRow).where(CitationRow.doc_id == doc_id).order_by(CitationRow.id)
+    )
+    return [
+        {
+            "id": row.id.split(":", 1)[-1],
+            "marker": row.marker,
+            "ref_ids": [ref.split(":", 1)[-1] for ref in (row.ref_ids or [])],
+            "block_id": row.block_id,
+            "bbox": list(row.bbox or []),
+            "method": row.method,
+        }
+        for row in rows
+    ]
+
+
+@router.get("/documents/{doc_id}/references")
+async def get_references(doc_id: str, session: SessionDep) -> list[dict[str, Any]]:
+    await _load(session, doc_id)
+    rows = await session.scalars(
+        select(ReferenceRow).where(ReferenceRow.doc_id == doc_id).order_by(ReferenceRow.index)
+    )
+    return [_reference_payload(row) for row in rows]
 
 
 @router.get("/documents/{doc_id}")
