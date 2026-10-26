@@ -7,6 +7,7 @@ Stage order (each independently re-runnable):
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -23,11 +24,19 @@ from ..models.schemas import (
     SourceKind,
 )
 from . import pdfio
+from .outline import build_outline
+
+logger = logging.getLogger(__name__)
 
 ARXIV_RE = re.compile(r"(\d{4}\.\d{4,5})(v\d+)?")
 CITE_RE = re.compile(r"\[(\d+(?:\s*[,\-–]\s*\d+)*)\]")
 _HEADING_RE = re.compile(r"^(\d+(?:\.\d+){0,2})\.?\s+(\S.{0,120})$")
-_REF_START = re.compile(r"^\[?(\d+)\]?[\.\s]")
+# The entry after the bracket starts with an author's name, which may begin
+# with a non-ASCII capital (Łukasz, Özlem, Åke), so the lookahead is Unicode.
+_REF_START = re.compile(r"^\[?(\d{1,3})\]?[\.\s]?\s*(?=[^\W\d_])", re.UNICODE)
+# "9(8):1735-1780, 1997." continues the entry above; it is a volume number,
+# not a new reference. A real entry starts with the author's name.
+_JOURNAL_LINE = re.compile(r"^\d+\s*\(?\d*\)?\s*[:.]")
 # A reference list ends at the first appendix-like heading.
 _REF_STOP = re.compile(
     r"^(appendix|attention visualizations|supplementary|acknowledg)", re.IGNORECASE
@@ -133,7 +142,7 @@ def _looks_two_column(page: pdfio.Page) -> bool:
     return narrow_left >= 3 and narrow_right >= 3 and narrow_chars > wide_chars
 
 
-def reading_order(page: pdfio.Page) -> list[pdfio.RawBlock]:
+def reading_order(page: pdfio.Page) -> list[pdfio.TypedBlock]:
     """Return blocks in reading order.
 
     Single-column pages read top to bottom. Two-column pages read the left
@@ -143,22 +152,22 @@ def reading_order(page: pdfio.Page) -> list[pdfio.RawBlock]:
     would be emitted after headings that visually precede it.
     """
     width, _ = pdfio.page_size(page)
-    blocks = pdfio.page_blocks(page)
-    by_position = sorted(blocks, key=lambda b: (round(b[1], 1), b[0]))
+    blocks = pdfio.typed_blocks(page)
+    by_position = sorted(blocks, key=lambda b: (round(b.y0, 1), b.x0))
     if not _looks_two_column(page):
         return by_position
 
-    def column_major(band: list[pdfio.RawBlock]) -> list[pdfio.RawBlock]:
-        left = [b for b in band if (b[0] + b[2]) / 2 < width / 2]
-        right = [b for b in band if (b[0] + b[2]) / 2 >= width / 2]
-        return sorted(left, key=lambda b: (round(b[1], 1), b[0])) + sorted(
-            right, key=lambda b: (round(b[1], 1), b[0])
+    def column_major(band: list[pdfio.TypedBlock]) -> list[pdfio.TypedBlock]:
+        left = [b for b in band if (b.x0 + b.x1) / 2 < width / 2]
+        right = [b for b in band if (b.x0 + b.x1) / 2 >= width / 2]
+        return sorted(left, key=lambda b: (round(b.y0, 1), b.x0)) + sorted(
+            right, key=lambda b: (round(b.y0, 1), b.x0)
         )
 
-    ordered: list[pdfio.RawBlock] = []
-    band: list[pdfio.RawBlock] = []
+    ordered: list[pdfio.TypedBlock] = []
+    band: list[pdfio.TypedBlock] = []
     for block in by_position:
-        if block[2] - block[0] > width * 0.6:
+        if block.x1 - block.x0 > width * 0.6:
             ordered.extend(column_major(band))
             band = []
             ordered.append(block)
@@ -183,7 +192,7 @@ def extract_blocks(
     doc: pdfio.Document, pages: list[PageStats], doc_id: str, page_limit: int | None = None
 ) -> tuple[list[Block], list[OutlineItem]]:
     blocks: list[Block] = []
-    outline: list[OutlineItem] = []
+    sizes: dict[str, float] = {}
     counter = 0
     section = "s0"
     total = pdfio.page_count(doc)
@@ -192,36 +201,39 @@ def extract_blocks(
     for page_index in range(limit):
         page = pdfio.page(doc, page_index)
         _, page_height = pdfio.page_size(page)
-        for x0, y0, x1, y1, text in reading_order(page):
+        for raw in reading_order(page):
             counter += 1
             block_id = f"b{counter}"
-            kind = _block_type(text, (x0, y0, x1, y1), page_height)
+            kind = _block_type(raw.text, (raw.x0, raw.y0, raw.x1, raw.y1), page_height)
             if kind == "heading":
-                match = _HEADING_RE.match(" ".join(text.split()))
-                level = 1 if match and "." not in (match.group(1) or "") else 2
                 section = f"s{counter}"
-                outline.append(
-                    OutlineItem(
-                        id=section,
-                        level=level,
-                        title=" ".join(text.split())[:200],
-                        page=page_index + 1,
-                        block_id=block_id,
-                    )
-                )
+            sizes[block_id] = raw.size
             blocks.append(
                 Block(
                     id=block_id,
                     type=kind,
                     page=page_index + 1,
-                    bbox=[x0, y0, x1, y1],
+                    bbox=[raw.x0, raw.y0, raw.x1, raw.y1],
                     reading_order=counter,
                     section_id=section,
-                    text=text.strip(),
+                    text=raw.text.strip(),
                     confidence=1.0,
+                    bold=raw.bold,
                 )
             )
+
+    # Stage 6 (T2.1): the heading tree replaces the block-level guess above,
+    # so sections come from the PDF outline when it has one.
+    outline = build_outline(doc, blocks, body_size=_body_size(doc), sizes=sizes)
     return blocks, outline
+
+
+def _body_size(doc: pdfio.Document) -> float:
+    try:
+        return font_profile(doc).body_size
+    except Exception:  # pragma: no cover - malformed page 1
+        logger.warning("font profile unavailable, assuming 10pt body")
+        return 10.0
 
 
 def _is_author_line(text: str) -> bool:
@@ -271,6 +283,7 @@ def extract_references(blocks: list[Block], doc_id: str) -> tuple[list[Reference
     references: list[Reference] = []
     citations: list[Citation] = []
     refs_started = False
+    unnumbered: list[Block] = []
 
     for block in blocks:
         text = block.text.strip()
@@ -285,8 +298,16 @@ def extract_references(blocks: list[Block], doc_id: str) -> tuple[list[Reference
                 refs_started = False
             else:
                 start = _REF_START.match(text)
+                if start and _JOURNAL_LINE.match(text):
+                    start = None  # a wrapped volume/page line, not a new entry
                 if start:
                     index = int(start.group(1))
+                    # A second list restarting at 1 (appendix, or a duplicated
+                    # bibliography) would collide with ids already issued; the
+                    # first list is the paper's own reference list.
+                    if index == 1 and references:
+                        refs_started = False
+                        continue
                     references.append(
                         Reference(
                             id=f"r{index}",
@@ -299,6 +320,10 @@ def extract_references(blocks: list[Block], doc_id: str) -> tuple[list[Reference
                 elif references:
                     previous = references[-1]
                     previous.raw = f"{previous.raw} {text}".strip()
+                else:
+                    # No numbered entry has appeared yet: the list may simply
+                    # be unnumbered (BERT), so collect it for the fallback.
+                    unnumbered.append(block)
 
         for marker in CITE_RE.finditer(text):
             numbers = _expand_marker(marker.group(1))
@@ -312,7 +337,42 @@ def extract_references(blocks: list[Block], doc_id: str) -> tuple[list[Reference
                     method="regex",
                 )
             )
+
+    if not references and unnumbered:
+        references = _split_unnumbered(unnumbered)
     return references, citations
+
+
+_AUTHOR_START = re.compile(r"^[A-Z][\w'’-]*(?:,|\s+[A-Z])")
+
+
+def _split_unnumbered(blocks: list[Block]) -> list[Reference]:
+    """Split an unnumbered reference list into entries.
+
+    BERT's bibliography has no numbers. Each entry starts a new author list
+    ("AlanAkbik,DuncanBlythe..."), so a block that starts with a capitalised
+    name begins an entry and every following block continues it. This is a
+    best-effort structure: the raw text is kept verbatim either way.
+    """
+    entries: list[Reference] = []
+    for block in blocks:
+        text = block.text.strip()
+        if not text:
+            continue
+        starts_entry = bool(_AUTHOR_START.match(text))
+        if not entries or starts_entry:
+            entries.append(
+                Reference(
+                    id=f"r{len(entries) + 1}",
+                    index=len(entries) + 1,
+                    raw=text,
+                    block_id=block.id,
+                    bbox=block.bbox,
+                )
+            )
+        else:
+            entries[-1].raw = f"{entries[-1].raw} {text}".strip()
+    return entries
 
 
 def _expand_marker(spec: str) -> list[int]:

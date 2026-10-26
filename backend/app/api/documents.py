@@ -382,7 +382,7 @@ def _quick_signals(filename: str, data: bytes) -> QuickSignals:
         try:
             first = page(doc, 0)
             blocks = reading_order(first)
-            texts = [text.strip() for _, _, _, _, text in blocks if text.strip()]
+            texts = [block.text.strip() for block in blocks if block.text.strip()]
             if texts:
                 title = texts[0][:300]
                 body = "\n".join(texts[:12])

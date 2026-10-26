@@ -10,6 +10,7 @@ of the pipeline stay fully typed; the suppression below is scoped to this file.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -66,9 +67,92 @@ def page_dict(page: Page) -> dict[str, Any]:
     return dict(page.get_text("dict"))
 
 
+@dataclass
+class TypedBlock:
+    """A text block with the typography needed to recognise headings."""
+
+    x0: float
+    y0: float
+    x1: float
+    y1: float
+    text: str
+    size: float
+    bold: bool
+
+
+_BOLD_MARKERS = ("bold", "black", "heavy", "semibold", "demibold", "medi")
+
+
+def typed_blocks(page: Page) -> list[TypedBlock]:
+    """Blocks with their dominant font size and whether the text is bold.
+
+    Text and typography come from the same `dict` pass, so a block cannot be
+    paired with the wrong font — which is what happens when `blocks` (which
+    drops empty blocks) and `dict` (which keeps them) are indexed separately.
+    """
+    out: list[TypedBlock] = []
+    for block in page_dict(page).get("blocks", []):
+        texts: list[str] = []
+        weights: dict[float, int] = {}
+        bold_chars = 0
+        total_chars = 0
+        for line in block.get("lines", []):
+            for span in line.get("spans", []):
+                text = str(span["text"])
+                if not text.strip():
+                    continue
+                size = round(float(span["size"]), 1)
+                texts.append(text)
+                weights[size] = weights.get(size, 0) + len(text)
+                total_chars += len(text)
+                if any(marker in str(span.get("font", "")).lower() for marker in _BOLD_MARKERS):
+                    bold_chars += len(text)
+        joined = "".join(texts)
+        if not joined.strip():
+            continue
+        size = max(weights, key=lambda s: weights[s]) if weights else 0.0
+        out.append(
+            TypedBlock(
+                x0=float(block["bbox"][0]),
+                y0=float(block["bbox"][1]),
+                x1=float(block["bbox"][2]),
+                y1=float(block["bbox"][3]),
+                text=joined,
+                size=size,
+                bold=total_chars > 0 and bold_chars >= total_chars * 0.6,
+            )
+        )
+    return out
+
+
 def document_metadata(doc: Document) -> dict[str, Any]:
     return dict(doc.metadata or {})
 
 
 def page_size(page: Page) -> tuple[float, float]:
     return float(page.rect.width), float(page.rect.height)
+
+
+@dataclass
+class Bookmark:
+    """One entry of the PDF's own outline, with the page it points at (1-based)."""
+
+    level: int
+    title: str
+    page: int
+
+
+def bookmarks(doc: Document) -> list[Bookmark]:
+    """The embedded table of contents, or [] when the PDF has none.
+
+    Titles are often just "1 Introduction" or "Introduction"; the caller
+    normalises them. `page` is -1 in PyMuPDF when the target cannot be
+    resolved, and those entries are dropped.
+    """
+    out: list[Bookmark] = []
+    for level, title, page_no in doc.get_toc(simple=True):
+        name = str(title).strip()
+        if not name or int(page_no) < 1:
+            continue
+        out.append(Bookmark(level=max(1, int(level)), title=name, page=int(page_no)))
+    return out

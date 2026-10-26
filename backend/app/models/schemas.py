@@ -88,6 +88,7 @@ class Block(BaseModel):
     asset_id: str | None = None
     lang: str = "en"
     confidence: float = 1.0
+    bold: bool = False
 
 
 class Reference(BaseModel):

@@ -23,7 +23,7 @@ command passes and its commit exists.
 | T1.3 Vector parsing | complete | Stages 1-3/5 with anchored metadata; verified on Transformer (8 authors), BERT (4), GPT-3 (31). 6 pytest. |
 | T1.4 Semantic dedup | complete | L1 sha256, L2 arXiv version, L3 cosine+MinHash; resolve keep_existing/replace/keep_both. Case 3.1 passes through the API. 11 pytest. |
 | T1.5 Version diff | complete | Section-level diff, stats, LLM summary whose digits must appear in the stats. v1 vs v7: 13 modified sections, 4 new refs. 12 pytest. |
-| T1.6 Library page on real API | not started | |
+| T1.6 Library page on real API | complete | Real `/documents` + SSE progress + dedup dialog + version diff; mock only behind `VITE_USE_MOCK`. DoD verified by `frontend/e2e/verify-ui.mjs` at 1440×900 / 1280×720 in both themes, zero console errors. 18 pytest for documents. |
 
 ## Stage 2 — Parsing and reader
 
