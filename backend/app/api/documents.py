@@ -210,6 +210,33 @@ async def resolve_dedup(doc_id: str, body: dict[str, Any], session: SessionDep) 
     return _document_payload(doc)
 
 
+@router.get("/documents/{doc_id}/versions/diff")
+async def version_diff(
+    doc_id: str,
+    session: SessionDep,
+    other: Annotated[str, Query(description="The version to compare against")],
+) -> dict[str, Any]:
+    """Section-level diff plus a <=200 character summary (T1.5).
+
+    The summary is generated from the statistics, never from the raw text, and
+    any digit it states must already appear in them (H04).
+    """
+    from ..ingest import diff as diff_mod
+    from ..llm.gateway import get_gateway
+
+    await _load(session, doc_id)
+    await _load(session, other)
+
+    stats, _raw, changes = await diff_mod.compare(session, doc_id, other)
+    summary = await diff_mod.summarise(stats, changes, get_gateway())
+    return {
+        "other_id": other,
+        "stats": stats,
+        "sections": changes,
+        "summary": summary,
+    }
+
+
 @router.get("/documents/{doc_id}")
 async def get_document(doc_id: str, session: SessionDep) -> dict[str, Any]:
     doc = await _load(session, doc_id)

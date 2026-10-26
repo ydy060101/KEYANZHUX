@@ -22,7 +22,7 @@ command passes and its commit exists.
 | T1.2 Upload and CRUD | complete | Multi-file upload, H09 validation, sha256 idempotency, PATCH/DELETE, Range streaming (206/416). 11 pytest. |
 | T1.3 Vector parsing | complete | Stages 1-3/5 with anchored metadata; verified on Transformer (8 authors), BERT (4), GPT-3 (31). 6 pytest. |
 | T1.4 Semantic dedup | complete | L1 sha256, L2 arXiv version, L3 cosine+MinHash; resolve keep_existing/replace/keep_both. Case 3.1 passes through the API. 11 pytest. |
-| T1.5 Version diff | not started | |
+| T1.5 Version diff | complete | Section-level diff, stats, LLM summary whose digits must appear in the stats. v1 vs v7: 13 modified sections, 4 new refs. 12 pytest. |
 | T1.6 Library page on real API | not started | |
 
 ## Stage 2 — Parsing and reader

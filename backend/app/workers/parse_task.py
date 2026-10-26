@@ -129,6 +129,34 @@ async def persist_parse(session: AsyncSession, model: DocumentModel) -> None:
                 confidence=block.confidence,
             )
         )
+    for reference in model.references:
+        session.add(
+            ReferenceRow(
+                id=f"{model.doc_id}:{reference.id}",
+                doc_id=model.doc_id,
+                index=reference.index,
+                raw=reference.raw,
+                title=reference.title,
+                authors=reference.authors,
+                year=reference.year,
+                doi=reference.doi,
+                arxiv_id=reference.arxiv_id,
+                block_id=reference.block_id,
+                bbox=reference.bbox,
+            )
+        )
+    for citation in model.citations:
+        session.add(
+            CitationRow(
+                id=f"{model.doc_id}:{citation.id}",
+                doc_id=model.doc_id,
+                marker=citation.marker,
+                ref_ids=citation.ref_ids,
+                block_id=citation.block_id,
+                bbox=citation.bbox,
+                method=citation.method,
+            )
+        )
     doc.title = model.meta.title or doc.title
     doc.arxiv_id = model.arxiv_id or doc.arxiv_id
     doc.version = model.version or doc.version

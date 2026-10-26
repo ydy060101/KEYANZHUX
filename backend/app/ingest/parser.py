@@ -106,28 +106,66 @@ def probe_pages(doc: pdfio.Document, threshold: int) -> list[PageStats]:
 
 
 def _looks_two_column(page: pdfio.Page) -> bool:
-    """A crude but stable signal: text blocks clustered on both halves."""
+    """True when most text sits in two narrow columns.
+
+    Counting blocks is not enough: equations and labels produce small fragments
+    on the right half of an otherwise single-column page. Weighing the text by
+    width distinguishes the two layouts reliably.
+    """
     width, _ = pdfio.page_size(page)
-    left = right = 0
-    for x0, _, x1, _, _ in pdfio.page_blocks(page):
-        if x1 < width * 0.5:
-            left += 1
-        elif x0 > width * 0.5:
-            right += 1
-    return left >= 3 and right >= 3
+    if width <= 0:
+        return False
+    wide_chars = narrow_left = narrow_right = 0
+    narrow_chars = 0
+    for x0, _, x1, _, text in pdfio.page_blocks(page):
+        length = len(text.strip())
+        if x1 - x0 > width * 0.6:
+            wide_chars += length
+        else:
+            narrow_chars += length
+            if (x0 + x1) / 2 < width / 2:
+                narrow_left += 1
+            else:
+                narrow_right += 1
+    total = wide_chars + narrow_chars
+    if total == 0:
+        return False
+    return narrow_left >= 3 and narrow_right >= 3 and narrow_chars > wide_chars
 
 
 def reading_order(page: pdfio.Page) -> list[pdfio.RawBlock]:
-    """Return blocks in column-major reading order (left column first)."""
+    """Return blocks in reading order.
+
+    Single-column pages read top to bottom. Two-column pages read the left
+    column, then the right — but a full-width block (a title, a wide figure, a
+    centred equation) splits the page into horizontal bands, and each band is
+    read column-major. Without the bands, body text below a full-width block
+    would be emitted after headings that visually precede it.
+    """
     width, _ = pdfio.page_size(page)
     blocks = pdfio.page_blocks(page)
+    by_position = sorted(blocks, key=lambda b: (round(b[1], 1), b[0]))
     if not _looks_two_column(page):
-        return sorted(blocks, key=lambda b: (round(b[1], 1), b[0]))
-    left = [b for b in blocks if (b[0] + b[2]) / 2 < width / 2]
-    right = [b for b in blocks if (b[0] + b[2]) / 2 >= width / 2]
-    return sorted(left, key=lambda b: (round(b[1], 1), b[0])) + sorted(
-        right, key=lambda b: (round(b[1], 1), b[0])
-    )
+        return by_position
+
+    def column_major(band: list[pdfio.RawBlock]) -> list[pdfio.RawBlock]:
+        left = [b for b in band if (b[0] + b[2]) / 2 < width / 2]
+        right = [b for b in band if (b[0] + b[2]) / 2 >= width / 2]
+        return sorted(left, key=lambda b: (round(b[1], 1), b[0])) + sorted(
+            right, key=lambda b: (round(b[1], 1), b[0])
+        )
+
+    ordered: list[pdfio.RawBlock] = []
+    band: list[pdfio.RawBlock] = []
+    for block in by_position:
+        if block[2] - block[0] > width * 0.6:
+            ordered.extend(column_major(band))
+            band = []
+            ordered.append(block)
+        else:
+            band.append(block)
+    ordered.extend(column_major(band))
+    return ordered
 
 
 def _block_type(text: str, bbox: tuple[float, float, float, float], page_height: float) -> BlockType:
