@@ -7,9 +7,9 @@ command passes and its commit exists.
 
 | Card | Status | Notes |
 |---|---|---|
-| T0.1 Repo and toolchain | in progress | |
-| T0.2 Contract implementation | not started | |
-| T0.3 LLM gateway | not started | |
+| T0.1 Repo and toolchain | complete | `tools.ps1 accept` green: ruff, eslint, mypy, tsc, 6 pytest, 4 vitest, vite build. |
+| T0.2 Contract implementation | complete | 21 tables created on PostgreSQL 17.6 + pgvector 0.8.7; Pydantic document model matches 01 §3. OpenAPI file pending. |
+| T0.3 LLM gateway | complete | Retries, rate limit, cache, JSON-schema retry, injection guard, FakeLLM. 6 tests. |
 | T0.4 Design system and shell | not started | |
 | T0.5 Six-page mock prototype | not started | |
 | T0.6 One-command startup | not started | |
