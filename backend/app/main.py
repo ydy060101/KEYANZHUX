@@ -50,11 +50,13 @@ def create_app() -> FastAPI:
     async def healthz() -> dict[str, str]:
         return {"status": "ok"}
 
+    from .api import documents as documents_api
     from .api import jobs as jobs_api
     from .workers import register_all
 
     register_all()
     app.include_router(jobs_api.router, prefix=settings.api_prefix)
+    app.include_router(documents_api.router, prefix=settings.api_prefix)
 
     return app
 

@@ -8,7 +8,6 @@ from typing import Any
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
-    ARRAY,
     Boolean,
     DateTime,
     Float,
@@ -18,7 +17,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -31,6 +30,8 @@ def new_id() -> str:
 
 
 class Base(DeclarativeBase):
+    # PostgreSQL's ARRAY, not the generic one: only the dialect type supports
+    # containment (`tags @> ARRAY['nlp']`).
     type_annotation_map = {dict[str, Any]: JSONB, list[str]: ARRAY(String)}
 
 
