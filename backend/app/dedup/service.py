@@ -171,20 +171,36 @@ async def _content_duplicate(
     for doc, fp in pairs:
         existing_sig = list(fp.minhash or [])
         jac = fingerprint.jaccard(new_sig, existing_sig)
-        cos = 1.0
-        if new_vec is not None and fp.title_abs_embedding is not None:
-            cos = cosine(new_vec, list(fp.title_abs_embedding))
-        score = min(cos, jac) if new_vec is not None else jac
+        cos = _cosine_or_none(new_vec, fp)
+        score = jac if cos is None else min(cos, jac)
         if best is None or score > best[0]:
             best = (score, doc, fp)
 
     if best is None:
         return None
-    score, doc, fp = best
+    _, doc, fp = best
     jac = fingerprint.jaccard(new_sig, list(fp.minhash or []))
-    cos = 1.0
-    if new_vec is not None and fp.title_abs_embedding is not None:
-        cos = cosine(new_vec, list(fp.title_abs_embedding))
+    cos = _cosine_or_none(new_vec, fp)
+
+    if cos is None:
+        # No vector was computed, so the title/abstract branch has nothing to
+        # measure. Claiming cosine 1.0 here would make every upload a
+        # "possible duplicate" of the first one in the library (H02), so only
+        # the body-overlap rule can fire, and the reason says so.
+        if jac >= settings.dedup_l3_minhash_jaccard:
+            return DedupInfo(
+                level="content_duplicate",
+                matched_doc_id=doc.id,
+                similarity=round(jac, 4),
+                existing_version=doc.version,
+                new_version=candidate.version,
+                suggestion="ask",
+                reason=(
+                    f"正文开头重合度 {jac:.0%}；内容相同但可能是不同格式，"
+                    "请选择保留哪一个或两者都保留"
+                ),
+            )
+        return None
 
     if cos >= settings.dedup_l3_cosine and jac >= settings.dedup_l3_minhash_jaccard:
         level = "content_duplicate"
@@ -209,6 +225,18 @@ async def _content_duplicate(
         suggestion=suggestion,
         reason=reason,
     )
+
+
+def _cosine_or_none(new_vec: list[float] | None, fp: DocFingerprint) -> float | None:
+    """Cosine of the title+abstract vectors, or None when one is missing.
+
+    None is a real answer here, not a zero: the vector may simply not have been
+    computed yet, and the caller must not read that as "identical" or as
+    "unrelated" (H02).
+    """
+    if new_vec is None or fp.title_abs_embedding is None:
+        return None
+    return cosine(new_vec, list(fp.title_abs_embedding))
 
 
 def _title_abstract(title: str, abstract: str) -> str:

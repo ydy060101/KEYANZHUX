@@ -80,9 +80,7 @@ def _merge_wrapped(headings: list[Heading]) -> list[Heading]:
         # A wrapped line is a continuation when the previous one does not end
         # a sentence and this one starts in lower case — or when the previous
         # ends mid-phrase ("for", "of"), which is how titles break.
-        continues = heading.title[:1].islower() or previous is not None and _ends_open(
-            previous.title
-        )
+        continues = heading.title[:1].islower() or previous is not None and _ends_open(previous.title)
         if (
             previous is not None
             and continues
@@ -166,11 +164,41 @@ def _size_of(block: Block, sizes: dict[str, float]) -> float:
 
 _BOLD_FLAGS = ("bold", "black", "heavy", "semibold", "demibold")
 
+# Displayed maths: letters glued to digits, or operators with no spacing.
+_FORMULA_HINT = re.compile(r"[=∑∏∫√≈≤≥±×÷∂∇^_]")
+# A digit written against a letter — "2i", "100002i" — is how maths sets a
+# subscript, and how no heading ever reads a section number ("3.2.2").
+_GLUED_DIGIT = re.compile(r"[A-Za-z]\d|\d[A-Za-z]")
+
+
+def _is_formula_like(text: str) -> bool:
+    """True for a line that reads as an equation rather than as words.
+
+    "PE(pos,2i+1) = cos(pos/100002i/dmodel)" was the largest block on its page
+    and so entered the heading tree; a heading is words, and a formula is not.
+    The leading section number is removed first, because "3.2.2 Multi-Head" and
+    BERT's "1Introduction" are glued digits that belong to a heading.
+    """
+    body = _NUMBERED.sub(r"\2", text)
+    if _GLUED_DIGIT.search(body) or _FORMULA_HINT.search(body):
+        return True
+    letters = sum(1 for char in body if char.isalpha())
+    solid = sum(1 for char in body if not char.isspace())
+    return solid > 0 and letters / solid < 0.6
+
 
 def _looks_like_heading(block: Block, body_size: float, sizes: dict[str, float]) -> bool:
     """Short, single-line, bold, and either numbered or larger than body text."""
     text = normalise_title(block.text)
     if not text or len(text) > 120 or "\n" in block.text.strip():
+        return False
+    # An address is never a heading, however it is typeset — and an OCR'd
+    # email reads "1 lion@google.com", which otherwise looks numbered.
+    if "@" in text or "://" in text:
+        return False
+    # A formula is not a heading even when it is the largest thing on the page:
+    # displayed maths is dense in digits and operators, prose is not.
+    if _is_formula_like(text):
         return False
     if text.endswith((".", ",", ";")) and _number_depth(text) is None:
         return False
@@ -180,9 +208,20 @@ def _looks_like_heading(block: Block, body_size: float, sizes: dict[str, float])
     # Strictly larger, not merely different: figure labels are set a point or
     # two *smaller* than body text, and a tolerance of 0.6 admitted them.
     larger = _size_of(block, sizes) > body_size + 0.4
+    body_height = body_size if body_size > 0 else 1.0
     if numbered:
-        return block.bold or larger
-    return block.bold and larger
+        return block.bold or larger or _taller(block, sizes, body_height)
+    return block.bold and (larger or _taller(block, sizes, body_height))
+
+
+def _taller(block: Block, sizes: dict[str, float], body_height: float) -> bool:
+    """Whether a block's own box is clearly taller than the body's line box.
+
+    The OCR path has no font sizes, only block heights, so a heading there is
+    recognised by being set larger than running text — the same test as `larger`
+    on the vector path, expressed in the units that path does have.
+    """
+    return body_height > 0 and _size_of(block, sizes) > body_height * 1.05
 
 
 def from_blocks(blocks: list[Block], body_size: float, sizes: dict[str, float]) -> list[Heading]:
@@ -193,11 +232,7 @@ def from_blocks(blocks: list[Block], body_size: float, sizes: dict[str, float]) 
     all of them is what keeps figure labels, footnotes and running text out of
     the tree — BERT's PDF has no outline, and size alone matched 126 blocks.
     """
-    candidates = [
-        block
-        for block in blocks
-        if _looks_like_heading(block, body_size, sizes)
-    ]
+    candidates = [block for block in blocks if _looks_like_heading(block, body_size, sizes)]
     # Numbered candidates must advance in sequence; a figure label that reads
     # "1Introduction" fails here because the numbering jumps.
     kept: list[Block] = []

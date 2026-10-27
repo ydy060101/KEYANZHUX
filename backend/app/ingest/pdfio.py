@@ -83,6 +83,40 @@ class TypedBlock:
 _BOLD_MARKERS = ("bold", "black", "heavy", "semibold", "demibold", "medi")
 
 
+def join_lines(lines: list[str]) -> str:
+    """A block's text from its lines, undoing the hyphenation a break introduced.
+
+    A line break is a typographic break, not a word boundary: "relying" at the
+    end of a line and "entirely" at the start of the next are two words, and
+    "transduc-" + "tion" is one. Concatenating without a separator produces
+    "relyingentirely", which is not a word in any language and which silently
+    corrupts every token built from it — search, MinHash and the QA回验 all
+    compare words.
+    """
+    if not lines:
+        return ""
+    text = lines[0]
+    for line in lines[1:]:
+        # "--" is an em dash set as two hyphens, not a broken word.
+        broken = text.endswith("-") and not text.endswith("--")
+        text = f"{text[:-1]}{line}" if broken else f"{text} {line}"
+    return text.strip()
+
+
+def block_text(block: dict[str, Any]) -> str:
+    """A block's words, keeping the spaces that are their own spans.
+
+    A producer often sets a word gap as a span containing just " ". Those spans
+    must survive: skipping them joins "convolutional" to "neural" and produces
+    text nobody can search, which is exactly what happened before. Line breaks
+    are joined separately, by `join_lines`.
+    """
+    lines: list[str] = []
+    for line in block.get("lines", []):
+        lines.append("".join(str(span["text"]) for span in line.get("spans", [])))
+    return join_lines(lines)
+
+
 def typed_blocks(page: Page) -> list[TypedBlock]:
     """Blocks with their dominant font size and whether the text is bold.
 
@@ -92,22 +126,24 @@ def typed_blocks(page: Page) -> list[TypedBlock]:
     """
     out: list[TypedBlock] = []
     for block in page_dict(page).get("blocks", []):
-        texts: list[str] = []
         weights: dict[float, int] = {}
         bold_chars = 0
         total_chars = 0
         for line in block.get("lines", []):
             for span in line.get("spans", []):
                 text = str(span["text"])
-                if not text.strip():
+                if not text:
                     continue
                 size = round(float(span["size"]), 1)
-                texts.append(text)
-                weights[size] = weights.get(size, 0) + len(text)
-                total_chars += len(text)
-                if any(marker in str(span.get("font", "")).lower() for marker in _BOLD_MARKERS):
-                    bold_chars += len(text)
-        joined = "".join(texts)
+                # A space contributes no weight to the body-size profile: the
+                # majority of characters on a page are prose, but a page of
+                # tightly set headings would otherwise be measured by its gaps.
+                if text.strip():
+                    weights[size] = weights.get(size, 0) + len(text)
+                    total_chars += len(text)
+                    if any(marker in str(span.get("font", "")).lower() for marker in _BOLD_MARKERS):
+                        bold_chars += len(text)
+        joined = block_text(block)
         if not joined.strip():
             continue
         size = max(weights, key=lambda s: weights[s]) if weights else 0.0

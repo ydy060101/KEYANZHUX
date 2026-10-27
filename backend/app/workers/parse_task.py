@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import get_settings
 from ..db import get_session_factory
+from ..dedup.service import Candidate
 from ..ingest import storage
 from ..ingest.assets import extract_assets
 from ..ingest.citations import build_citations
@@ -50,7 +51,7 @@ async def parse_document(job_id: str, payload: dict[str, Any]) -> dict[str, Any]
         async with factory() as session:
             await JobService(session).progress(job_id, stage="layout", progress=0.2)
 
-        blocks, outline = extract_blocks(doc_handle, pages, doc_id)
+        blocks, outline = extract_blocks(doc_handle, pages, doc_id, threshold=settings.scanned_page_char_threshold)
         async with factory() as session:
             await JobService(session).progress(job_id, stage="metadata", progress=0.45)
 
@@ -98,6 +99,21 @@ async def parse_document(job_id: str, payload: dict[str, Any]) -> dict[str, Any]
         await persist_parse(session, model)
         await _store_fingerprint(session, model)
 
+    result: dict[str, Any] = {
+        "doc_id": doc_id,
+        "blocks": len(blocks),
+        "pages": total_pages,
+        "references": len(references),
+        "citations": len(citations),
+        "coverage": coverage.as_dict(),
+    }
+    # A scan has no text at upload time, so the duplicate check that ran then
+    # could only use the filename. Now that OCR has read the pages, §8 requires
+    # the content comparison to be made again.
+    if model.source_kind in {"scanned", "mixed"}:
+        async with factory() as session:
+            await _recheck_duplicate(session, model, result)
+
     logger.info(
         "parsed doc_id=%s blocks=%d pages=%d citations=%d cited=%d/%d",
         doc_id,
@@ -107,33 +123,46 @@ async def parse_document(job_id: str, payload: dict[str, Any]) -> dict[str, Any]
         coverage.cited,
         coverage.references,
     )
-    return {
-        "doc_id": doc_id,
-        "blocks": len(blocks),
-        "pages": total_pages,
-        "references": len(references),
-        "citations": len(citations),
-        "coverage": coverage.as_dict(),
-    }
+    return result
 
 
 async def _store_fingerprint(session: AsyncSession, model: DocumentModel) -> None:
     """Index the fingerprint L3 dedup compares against on the next upload."""
-    from ..dedup.service import Candidate, store_fingerprint
+    from ..dedup.service import store_fingerprint
 
+    await store_fingerprint(session, model.doc_id, _candidate(model))
+
+
+def _candidate(model: DocumentModel) -> Candidate:
+    """What L3 sees of a parsed document: title, abstract and opening text."""
     body = "\n".join(block.text for block in model.blocks if block.type != "reference")[:8000]
-    await store_fingerprint(
-        session,
-        model.doc_id,
-        Candidate(
-            sha256=model.sha256,
-            arxiv_id=model.arxiv_id,
-            version=model.version,
-            title=model.meta.title,
-            abstract=model.meta.abstract.text if model.meta.abstract else "",
-            body=body,
-        ),
+    return Candidate(
+        sha256=model.sha256,
+        arxiv_id=model.arxiv_id,
+        version=model.version,
+        title=model.meta.title,
+        abstract=model.meta.abstract.text if model.meta.abstract else "",
+        body=body,
     )
+
+
+async def _recheck_duplicate(session: AsyncSession, model: DocumentModel, result: dict[str, Any]) -> None:
+    """Re-run L3 once OCR has produced text (01 §8, T2.4).
+
+    The upload path can only judge a scan by its filename, which §8 forbids, so
+    the parse job judges it again now that the pages carry text. The finding
+    goes into the job result, which the client already polls.
+    """
+    from ..dedup.service import check
+
+    candidate = _candidate(model)
+    if not candidate.body.strip():
+        return
+    found = await check(session, candidate, exclude_doc_id=model.doc_id, load_model=False)
+    if found is None:
+        return
+    result["dedup"] = found.model_dump()
+    logger.info("post-OCR dedup for %s: %s vs %s", model.doc_id, found.level, found.matched_doc_id)
 
 
 async def persist_parse(session: AsyncSession, model: DocumentModel) -> None:

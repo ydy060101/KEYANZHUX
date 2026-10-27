@@ -18,6 +18,15 @@ SHINGLE_SIZE = 5
 _MASK = (1 << 61) - 1
 _WORD_RE = re.compile(r"[a-z0-9]+")
 
+# A PDF may set "fi", "fl", "ff" as one glyph. The vector copy then reads
+# "conﬁguration" where a scan of the same page reads "configuration", and a
+# token comparison would count every such word as a difference between two
+# copies of one paper. Folding them onto their letters is lossless.
+_LIGATURES = str.maketrans(
+    {"ﬀ": "ff", "ﬁ": "fi", "ﬂ": "fl", "ﬃ": "ffi", "ﬄ": "ffl",
+     "ﬅ": "st", "ﬆ": "st"}
+)
+
 # Fixed coefficients so the same text always yields the same signature (H06).
 _rng = np.random.default_rng(20240601)
 _A = _rng.integers(1, _MASK, size=NUM_PERM, dtype=np.int64)
@@ -25,7 +34,12 @@ _B = _rng.integers(0, _MASK, size=NUM_PERM, dtype=np.int64)
 
 
 def tokenize(text: str) -> list[str]:
-    return _WORD_RE.findall(text.lower())
+    """Words, with typographic ligatures folded onto their letters.
+
+    Lowercasing already drops case, which no duplicate rule should care about;
+    a ligature is the same kind of notational difference.
+    """
+    return _WORD_RE.findall(text.translate(_LIGATURES).lower())
 
 
 def shingles(tokens: list[str], size: int = SHINGLE_SIZE) -> list[int]:

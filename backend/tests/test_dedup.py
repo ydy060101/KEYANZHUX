@@ -274,3 +274,84 @@ def test_version_comparison(new: str, old: str, expected: str) -> None:
     suggestion, reason = _version_reason(new, old)
     assert suggestion == expected
     assert old in reason
+
+
+def test_ligatures_do_not_change_a_word() -> None:
+    """A PDF may set "fi" as one glyph; the word is the same either way.
+
+    Without this folding the vector copy of a paper and the OCR copy of the
+    same paper disagree on every "conﬁguration"/"configuration".
+    """
+    assert fingerprint.tokenize("conﬁguration") == fingerprint.tokenize("configuration")
+    assert fingerprint.tokenize("eﬃcient ﬂow") == ["efficient", "flow"]
+
+
+class ScanCopyEmbedder(Embedder):
+    """Stands in for an embedding model on the no-model path of L3."""
+
+    def __init__(self) -> None:
+        super().__init__(model_name="missing")
+        self._load_error = "no weights"
+
+    def _load(self) -> Any:  # pragma: no cover - never called
+        raise RuntimeError("no weights")
+
+
+async def test_a_scan_matches_its_vector_original(session: Any) -> None:
+    """T2.4: after OCR, the scanned upload is recognised as the same content.
+
+    Uses the two real fixtures — the vector PDF and a scan of the same paper —
+    so the test measures the pipeline, not a hand-written approximation of it.
+    The pair must be found without embeddings, because a scan is parsed before
+    the model is warm (01 §8 allows the MinHash path on its own).
+    """
+    original, scanned = _fixture_candidates()
+    await _add_doc(
+        session,
+        sha256="9" * 64,
+        title=original.title,
+        abstract=original.abstract,
+        body=original.body,
+    )
+    hit = await check(session, scanned, embedder=ScanCopyEmbedder())
+    assert hit is not None, "a scan of a paper already in the library must be found"
+    assert hit.level == "content_duplicate"
+    assert "格式" in hit.reason
+
+
+async def test_an_unrelated_paper_is_not_matched_by_the_scan_rule(session: Any) -> None:
+    """The control for the test above: a different paper stays unmatched."""
+    _, scanned = _fixture_candidates()
+    bert = _fixture_candidate("1810.04805_bert.pdf", "bert")
+    await _add_doc(
+        session,
+        sha256="8" * 64,
+        title=bert.title,
+        abstract=bert.abstract,
+        body=bert.body,
+    )
+    hit = await check(session, scanned, embedder=ScanCopyEmbedder())
+    assert hit is None
+
+
+def _fixture_candidate(name: str, doc_id: str) -> Candidate:
+    """One fixture PDF as L3 sees it: title, abstract and opening body text."""
+    from pathlib import Path
+
+    from app.ingest.parser import parse_pdf
+
+    path = Path(__file__).resolve().parent.parent / "fixtures" / "pdf" / name
+    model = parse_pdf(path, doc_id).model
+    return Candidate(
+        sha256=doc_id,
+        arxiv_id=None,
+        version=None,
+        title=model.meta.title,
+        abstract=model.meta.abstract.text if model.meta.abstract else "",
+        body="\n".join(b.text for b in model.blocks if b.type != "reference")[:8000],
+    )
+
+
+def _fixture_candidates() -> tuple[Candidate, Candidate]:
+    """The vector original and the scan of it, as L3 sees them."""
+    return _fixture_candidate("1706.03762v1.pdf", "vec"), _fixture_candidate("1706.03762v1_img.pdf", "scan")

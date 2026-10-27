@@ -32,7 +32,7 @@ command passes and its commit exists.
 | T2.1 Heading tree | complete | Bookmarks first, font-size+numbering fallback with sequence validation, max 3 levels. Transformer 22 headings (3 levels), BERT 25 (rules only), GPT-3 32 — all matching the printed contents. 12 pytest. |
 | T2.2 Figures, tables, formulas | complete | Caption pairing, table-body extension, symbol-density formula detection; every asset keeps a 2× page crop. v1: 5 figures, 4 tables, 13 formulas. Sub-figure labels (3.2) keep their own ids. 11 pytest. |
 | T2.3 References and citation markers | complete | Link annotations first, regex per-page fallback; markers split across links are rejoined. v1 36/36 cited, v7 40/40, GPT-3 144/144, BERT 52/56 — zero dangling. Reference parsing handles numbered, alpha-keyed and unnumbered (margin-split) bibliographies. Coverage in `stats` (CR-004). 18 pytest. |
-| T2.4 Scanned OCR | not started | |
+| T2.4 Scanned OCR | complete | Page probe → OCR only on text-free pages → same document model. PaddleOCR 3.7 (PP-OCRv5 mobile, 2× render), ~5s/page; bbox and confidence kept on every block (H01). The scan restores title, abstract, all 24 printed headings (1–7 incl. "6 Results", subsections, References), 36 references and 5 figures/4 tables; raw OCR vs the vector text layer is 0.95 shingle containment. Dedup is re-run after OCR: the scan scores 0.844 against its vector original (unrelated fixtures 0.000), so it is reported as content_duplicate with both copies kept. Fixes 3 parser defects found on the way (word gaps dropped, headings needing a space, caption separator). 15 pytest. |
 | T2.5 Long book pipeline | not started | |
 | T2.6 Reader (structure and render) | not started | |
 

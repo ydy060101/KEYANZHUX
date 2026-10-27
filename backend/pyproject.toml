@@ -27,7 +27,19 @@ dependencies = [
     "sentence-transformers>=3,<6",
 ]
 
+# OCR for scanned pages (T2.4). Optional because the stack pulls a ~500MB
+# runtime and several pinned wheels; without it a scan parses as having no text
+# and the worker logs a warning instead of failing (H08).
 [project.optional-dependencies]
+ocr = [
+    "paddlepaddle==3.2.0",
+    "paddleocr==3.7.0",
+    "paddlex==3.7.2",
+    # paddlex gates its OCR pipeline on this exact opencv version.
+    "opencv-contrib-python==4.10.0.84",
+    "albumentations==2.0.8",
+    "albucore==0.0.24",
+]
 dev = [
     "pytest>=8.3,<9",
     "pytest-asyncio>=0.24,<1",

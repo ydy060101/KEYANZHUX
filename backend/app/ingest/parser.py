@@ -21,7 +21,7 @@ from ..models.schemas import (
     Reference,
     SourceKind,
 )
-from . import pdfio
+from . import layout, ocr, pdfio
 from .assets import extract_assets
 from .citations import Coverage, build_citations
 from .outline import build_outline
@@ -31,6 +31,13 @@ logger = logging.getLogger(__name__)
 
 ARXIV_RE = re.compile(r"(\d{4}\.\d{4,5})(v\d+)?")
 _HEADING_RE = re.compile(r"^(\d+(?:\.\d+){0,2})\.?\s+(\S.{0,120})$")
+# A bibliography entry: a bracketed label ("[3] Denny" / "[3]Denny" /
+# "[VSP+17] Ashish") or a dotted number ("3. Denny" / "3.Denny"). The label is
+# required — a paragraph that merely opens with a number ("12 million people")
+# is not an entry — and the lookahead needs a letter, so "3." alone is not one.
+_REFERENCE_RE = re.compile(
+    r"^(?:\[(?:\d{1,3}|[A-Za-z][\w+:.-]*\d)\]\s*|\d{1,3}\.\s*)(?=[^\W\d_])", re.UNICODE
+)
 
 
 @dataclass
@@ -40,7 +47,6 @@ class PageStats:
     width: float
     height: float
     columns: int
-
 
 
 @dataclass
@@ -105,83 +111,59 @@ def probe_pages(doc: pdfio.Document, threshold: int) -> list[PageStats]:
     return stats
 
 
-def _looks_two_column(page: pdfio.Page) -> bool:
-    """True when most text sits in two narrow columns.
-
-    Counting blocks is not enough: equations and labels produce small fragments
-    on the right half of an otherwise single-column page. Weighing the text by
-    width distinguishes the two layouts reliably.
-    """
+def _looks_two_column(page: pdfio.Page, blocks: list[pdfio.TypedBlock] | None = None) -> bool:
     width, _ = pdfio.page_size(page)
-    if width <= 0:
-        return False
-    wide_chars = narrow_left = narrow_right = 0
-    narrow_chars = 0
-    for x0, _, x1, _, text in pdfio.page_blocks(page):
-        length = len(text.strip())
-        if x1 - x0 > width * 0.6:
-            wide_chars += length
-        else:
-            narrow_chars += length
-            if (x0 + x1) / 2 < width / 2:
-                narrow_left += 1
-            else:
-                narrow_right += 1
-    total = wide_chars + narrow_chars
-    if total == 0:
-        return False
-    return narrow_left >= 3 and narrow_right >= 3 and narrow_chars > wide_chars
+    return layout.looks_two_column(blocks if blocks is not None else pdfio.typed_blocks(page), width)
 
 
 def reading_order(page: pdfio.Page) -> list[pdfio.TypedBlock]:
-    """Return blocks in reading order.
+    """Return a page's text blocks in reading order (see `layout.order`)."""
+    width, _ = pdfio.page_size(page)
+    return layout.order(pdfio.typed_blocks(page), width)
 
-    Single-column pages read top to bottom. Two-column pages read the left
-    column, then the right — but a full-width block (a title, a wide figure, a
-    centred equation) splits the page into horizontal bands, and each band is
-    read column-major. Without the bands, body text below a full-width block
-    would be emitted after headings that visually precede it.
+
+def page_blocks(page: pdfio.Page, *, scanned: bool) -> list[pdfio.TypedBlock]:
+    """A page's blocks in reading order, from the text layer or from OCR.
+
+    Only a page with no usable text layer is OCR'd (T2.4): the PDF's own text
+    is exact and carries font sizes and bboxes that no recogniser can match,
+    so it is always preferred where it exists. A `mixed` document therefore
+    uses both paths, page by page.
     """
     width, _ = pdfio.page_size(page)
-    blocks = pdfio.typed_blocks(page)
-    by_position = sorted(blocks, key=lambda b: (round(b.y0, 1), b.x0))
-    if not _looks_two_column(page):
-        return by_position
-
-    def column_major(band: list[pdfio.TypedBlock]) -> list[pdfio.TypedBlock]:
-        left = [b for b in band if (b.x0 + b.x1) / 2 < width / 2]
-        right = [b for b in band if (b.x0 + b.x1) / 2 >= width / 2]
-        return sorted(left, key=lambda b: (round(b.y0, 1), b.x0)) + sorted(
-            right, key=lambda b: (round(b.y0, 1), b.x0)
-        )
-
-    ordered: list[pdfio.TypedBlock] = []
-    band: list[pdfio.TypedBlock] = []
-    for block in by_position:
-        if block.x1 - block.x0 > width * 0.6:
-            ordered.extend(column_major(band))
-            band = []
-            ordered.append(block)
-        else:
-            band.append(block)
-    ordered.extend(column_major(band))
-    return ordered
+    if scanned:
+        return layout.order(ocr.page_blocks(page), width)
+    return reading_order(page)
 
 
 def _block_type(text: str, bbox: tuple[float, float, float, float], page_height: float) -> BlockType:
     stripped = text.strip()
     if _HEADING_RE.match(stripped) and len(stripped) < 90:
         return "heading"
-    if stripped.startswith(("[", "1.", "2.")) and re.match(r"^\[?\d+\]?\s", stripped):
+    # "[3] Denny Britz" and "[3]Denny Britz" are the same entry: the source PDF
+    # sets no space after the bracket, so requiring one would type the vector
+    # copy's whole bibliography as paragraphs while the OCR copy types it as
+    # references — the two parses of one paper would then disagree.
+    if _REFERENCE_RE.match(stripped):
         return "reference"
     if stripped.lower().startswith(("figure", "table", "fig.")):
         return "caption"
     return "paragraph"
 
 
+def _is_scanned(stats: PageStats, threshold: int) -> bool:
+    return stats.char_count < threshold
+
+
 def extract_blocks(
-    doc: pdfio.Document, pages: list[PageStats], doc_id: str, page_limit: int | None = None
+    doc: pdfio.Document,
+    pages: list[PageStats],
+    doc_id: str,
+    page_limit: int | None = None,
+    *,
+    threshold: int = 30,
 ) -> tuple[list[Block], list[OutlineItem]]:
+    scanned = {page.index: _is_scanned(page, threshold) for page in pages}
     blocks: list[Block] = []
     sizes: dict[str, float] = {}
     counter = 0
@@ -192,7 +174,8 @@ def extract_blocks(
     for page_index in range(limit):
         page = pdfio.page(doc, page_index)
         _, page_height = pdfio.page_size(page)
-        for raw in reading_order(page):
+        page_is_scan = scanned.get(page_index + 1, False)
+        for raw in page_blocks(page, scanned=page_is_scan):
             counter += 1
             block_id = f"b{counter}"
             kind = _block_type(raw.text, (raw.x0, raw.y0, raw.x1, raw.y1), page_height)
@@ -208,23 +191,36 @@ def extract_blocks(
                     reading_order=counter,
                     section_id=section,
                     text=raw.text.strip(),
-                    confidence=1.0,
+                    # A recognised character is a guess; leaving 1.0 would claim
+                    # the same certainty as extracted text (H01).
+                    confidence=0.9 if page_is_scan else 1.0,
                     bold=raw.bold,
                 )
             )
 
     # Stage 6 (T2.1): the heading tree replaces the block-level guess above,
     # so sections come from the PDF outline when it has one.
-    outline = build_outline(doc, blocks, body_size=_body_size(doc), sizes=sizes)
+    outline = build_outline(doc, blocks, body_size=_body_size(doc, blocks, scanned), sizes=sizes)
     return blocks, outline
 
 
-def _body_size(doc: pdfio.Document) -> float:
+def _body_size(doc: pdfio.Document, blocks: list[Block] | None = None, scanned: dict[int, bool] | None = None) -> float:
+    """The dominant body size, from the font profile or from OCR line heights.
+
+    A scanned page has no spans to profile, so its body size comes from the
+    median block size instead — without it every heading test compares against
+    a meaningless default of 10pt.
+    """
     try:
-        return font_profile(doc).body_size
+        if not scanned or not all(scanned.values()):
+            return font_profile(doc).body_size
     except Exception:  # pragma: no cover - malformed page 1
         logger.warning("font profile unavailable, assuming 10pt body")
         return 10.0
+    sizes = sorted(block_height for block in (blocks or []) for block_height in [block.bbox[3] - block.bbox[1]])
+    if not sizes:
+        return 10.0
+    return sizes[len(sizes) // 2]
 
 
 def _is_author_line(text: str) -> bool:
@@ -282,7 +278,7 @@ def parse_pdf(path: Path, doc_id: str, *, threshold: int = 30, page_limit: int |
     doc = pdfio.open_document(path)
     try:
         pages = probe_pages(doc, threshold)
-        blocks, outline = extract_blocks(doc, pages, doc_id, page_limit=page_limit)
+        blocks, outline = extract_blocks(doc, pages, doc_id, page_limit=page_limit, threshold=threshold)
         meta = extract_meta(doc, blocks, doc_id)
         first_text = blocks[0].text if blocks else ""
         arxiv_id, version = detect_arxiv_id(path.name, first_text)

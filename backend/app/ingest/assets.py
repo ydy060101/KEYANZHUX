@@ -21,8 +21,13 @@ from . import pdfio, storage
 
 logger = logging.getLogger(__name__)
 
+# A caption's label ends in a colon, or in a full stop followed by a space.
+# Without that second condition the pattern also matches prose: "Table 2.1
+# shows the sizes" parses as label "2" + separator "." + text "1 shows the
+# sizes", which is how a real caption gets misread as a sentence and dropped.
 _CAPTION = re.compile(
-    r"^(figure|table|fig\.)\s*(\d+(?:\.\d+)?)\s*[:.]\s*(.*)$", re.IGNORECASE | re.DOTALL
+    r"^(figure|table|fig\.)\s*(\d+(?:\.\d+)*)\s*(?::|\.(?=\s))\s*(.*)$",
+    re.IGNORECASE | re.DOTALL,
 )
 # A formula line: mostly symbols, digits and single letters, not prose.
 _FORMULA_HINT = re.compile(r"[=∑∏∫√≈≤≥±×÷∂∇αβγδεθλμσϕω]")
@@ -64,14 +69,19 @@ def find_captions(blocks: list[Block]) -> list[Caption]:
     """Captions in reading order. A caption that is a sentence is not one.
 
     "Table 2 summarizes our results" reads like a caption but is body text, so
-    a caption must not end like a sentence and must stay short.
+    a caption must not end like a sentence. Length is not the test: GPT-3 and
+    BERT both set captions of 500-900 characters, and a length cap dropped
+    them. What separates caption from prose is the label and its separator,
+    which `_CAPTION` now requires.
     """
     found: list[Caption] = []
     for block in blocks:
         caption = _caption_of(block)
         if caption is None:
             continue
-        if len(caption.text) > 400 or caption.text.endswith(("and", "the", "of")):
+        # A caption that trails off mid-phrase was cut by a page break, and the
+        # graphic it belongs to is on the next page.
+        if caption.text.endswith(("and", "the", "of", "in", "with")):
             continue
         if caption.text[:1].islower() and caption.kind == "figure":
             continue
@@ -80,7 +90,7 @@ def find_captions(blocks: list[Block]) -> list[Caption]:
 
 
 def _graphic_region(
-    page: pdfio.Page, caption: Block
+    page: pdfio.Page, caption: Block, blocks: list[Block] | None = None
 ) -> tuple[float, float, float, float] | None:
     """The graphic that belongs to a caption, or None.
 
@@ -93,6 +103,11 @@ def _graphic_region(
     boxes = pdfio.image_boxes(page) + pdfio.drawing_boxes(page)
     if not boxes:
         return None
+    if _is_full_page_image(boxes, page):
+        # A scan is one image of the whole page, so there is no drawn region to
+        # find. The graphic's extent is what the recogniser saw as labels above
+        # or below the caption (see `_scan_region`).
+        return _scan_region(caption, blocks or [], page)
 
     gap = height * _GRAPHIC_GAP
     above = [b for b in boxes if b[3] <= caption.bbox[1] + 8 and b[3] >= caption.bbox[1] - gap]
@@ -105,6 +120,58 @@ def _graphic_region(
     x1 = max(b[2] for b in candidates)
     y1 = max(b[3] for b in candidates)
     return (x0, y0, x1, y1)
+
+
+def _is_full_page_image(boxes: list[tuple[float, float, float, float]], page: pdfio.Page) -> bool:
+    """True when the page is one scanned image rather than a placed figure."""
+    width, height = pdfio.page_size(page)
+    return any((b[2] - b[0]) >= width * 0.9 and (b[3] - b[1]) >= height * 0.9 for b in boxes)
+
+
+_PROSE_WIDTH = 0.5
+_MAX_SCAN_SPAN = 0.55
+
+
+def _scan_region(caption: Block, blocks: list[Block], page: pdfio.Page) -> tuple[float, float, float, float] | None:
+    """The graphic's box on a scanned page, found from the labels around it.
+
+    A diagram on a scan carries its own text — node labels, axis ticks — which
+    OCR reads as short lines. Those lines bound the graphic: the region runs
+    from the nearest prose line above (or the page margin) to the caption, and
+    covers the width the labels occupy. A table is the same idea with its
+    caption above it.
+    """
+    width, height = pdfio.page_size(page)
+    same_page = [block for block in blocks if block.page == caption.page and block.id != caption.id]
+    above = [block for block in same_page if block.bbox[3] <= caption.bbox[1] + 4]
+    below = [block for block in same_page if block.bbox[1] >= caption.bbox[3] - 4]
+    side = above if len(above) >= len(below) else below
+    if not side:
+        return None
+
+    def is_prose(block: Block) -> bool:
+        return (block.bbox[2] - block.bbox[0]) > width * _PROSE_WIDTH
+
+    labels: list[Block] = []
+    for block in sorted(side, key=lambda b: -b.bbox[3] if side is above else b.bbox[1]):
+        if is_prose(block):
+            break  # running text: the graphic has ended
+        labels.append(block)
+        if len(labels) > 60:
+            break
+    if not labels:
+        return None
+    if side is above:
+        top = min(block.bbox[1] for block in labels)
+        bottom = caption.bbox[3]
+    else:
+        top = caption.bbox[1]
+        bottom = max(block.bbox[3] for block in labels)
+    if bottom - top > height * _MAX_SCAN_SPAN:
+        return None  # the "labels" run most of the page: this is body text
+    left = min([caption.bbox[0]] + [block.bbox[0] for block in labels])
+    right = max([caption.bbox[2]] + [block.bbox[2] for block in labels])
+    return (left, top, min(right, width), bottom)
 
 
 def _union(
@@ -122,7 +189,7 @@ def extract_assets(doc: pdfio.Document, blocks: list[Block], doc_id: str) -> lis
 
     for caption in captions:
         page = pdfio.page(doc, caption.page - 1)
-        region = _graphic_region(page, caption.block)
+        region = _graphic_region(page, caption.block, blocks)
         caption_box = (
             caption.block.bbox[0],
             caption.block.bbox[1],
@@ -156,11 +223,7 @@ def _table_body_region(
     the caption's and that sit below it, stopping at the first block that reads
     like prose (a sentence, which means the table has ended).
     """
-    same_page = [
-        block
-        for block in blocks
-        if block.page == caption.page and block.bbox[1] > caption.block.bbox[3] - 2
-    ]
+    same_page = [block for block in blocks if block.page == caption.page and block.bbox[1] > caption.block.bbox[3] - 2]
     same_page.sort(key=lambda block: block.bbox[1])
     bottom = region[3]
     left = min(region[0], caption.block.bbox[0])

@@ -32,6 +32,14 @@ New dependencies must be recorded here with their purpose and why the existing s
 | pandas | 3.0.0 | CSV parsing and chart statistics | Fixed by the spec for the data workshop. |
 | python-dotenv | 1.2.4 | `.env` loading | pydantic-settings reads `.env` through it. |
 | sentence-transformers | 5.7.0 | Local bge-m3 embeddings and bge-reranker-v2-m3 | Fixed by the spec; no hosted endpoint serves these models. Pulls torch 2.14.1+cpu. |
+| paddlepaddle | 3.2.0 | CPU inference runtime for PaddleOCR | Fixed by the spec (PaddleOCR is the required OCR engine) and it has no other runtime. |
+| paddleocr | 3.7.0 | OCR of scanned pages (T2.4) | Fixed by the spec. Version 3.x is required: 2.x aborts on a oneDNN `NotFoundError` against paddle 3.2. |
+| paddlex | 3.7.2 | OCR pipeline that paddleocr 3.x delegates to | paddleocr 3.x ships no pipeline code of its own; it calls paddlex. |
+| opencv-contrib-python | 4.10.0.84 | Page image decoding and the OCR detectors' backend | paddlex's `is_extra_available('ocr-core')` requires exactly this version; any other is reported as "OCR requires additional dependencies". |
+| opencv-python | 5.0.0.93 | Pulled in by paddlex alongside contrib | Required by paddlex's own dependency set; both can coexist. |
+| albumentations / albucore | 2.0.8 / 0.0.24 | Image augmentation imported by paddlex's OCR transforms | Import-time dependency of paddlex; albucore 0.0.24 is its exact pin and 0.3.x raises `KeyError: numpy.uint32` on import. |
+| shapely | 2.2.0 | Polygon geometry in paddlex's table pipeline | Imported by paddlex at OCR-pipeline construction. |
+| numpy | 2.3.5 (OCR env) | Vector math | paddlex 3.7.2 requires `<2.4`; the pinned 2.4.0 was lowered to satisfy it. |
 
 ## Backend tooling
 
@@ -77,6 +85,5 @@ New dependencies must be recorded here with their purpose and why the existing s
 ## Not yet added
 
 These are required by later cards and will be registered when their card starts:
-`rank_bm25`,
-`paddleocr`, `minhash`, `sickle`, `APScheduler`, `networkx`, `scikit-learn`,
+`rank_bm25`, `minhash`, `sickle`, `APScheduler`, `networkx`, `scikit-learn`,
 `rapidfuzz`, `openpyxl`, `python-docx`.
