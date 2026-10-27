@@ -34,7 +34,7 @@ from app.config import get_settings  # noqa: E402
 from app.ingest import storage  # noqa: E402
 from app.ingest.windows import plan  # noqa: E402
 from app.models.orm import Block as BlockRow  # noqa: E402
-from app.models.orm import Chunk, Document, Job, SectionSummaryRow  # noqa: E402
+from app.models.orm import Chunk, Document, Job, ReferenceRow, SectionSummaryRow  # noqa: E402
 from app.workers import queue, register_all  # noqa: E402
 
 BOOK = BACKEND / "fixtures" / "pdf" / "UnderstandingDeepLearning_02_09_26_C.pdf"
@@ -159,12 +159,15 @@ async def main() -> int:
             .select_from(BlockRow)
             .where(BlockRow.doc_id == doc_id, BlockRow.type == "heading")
         )
+        references = await session.scalar(
+            select(func.count()).select_from(ReferenceRow).where(ReferenceRow.doc_id == doc_id)
+        )
         assert row is not None and doc is not None
         print(f"\njob: {row.status} stage={row.stage} progress={row.progress:.2f} error={row.error}")
         print(f"doc: status={doc.status} pages={doc.page_count} source_kind={doc.source_kind}")
         print(
             f"stored: blocks={blocks} pages={pages} chunks={chunks} "
-            f"sections={sections} headings={headings}"
+            f"sections={sections} headings={headings} references={references}"
         )
         print(f"elapsed {elapsed:.1f}s")
 
@@ -194,6 +197,9 @@ async def main() -> int:
         and pages == 541 - len(blank)
         and peak < get_settings().parse_memory_limit_mb
         and len(planned) == len(reported)
+        # The bibliography is document-wide; a window-aligned extraction used
+        # to miss it entirely on this book (T2.6).
+        and bool(references)
     )
     print(f"blank pages in the source: {blank} ({len(blank)} of 541)")
     print("\nB3:", "PASS" if ok else "FAIL")

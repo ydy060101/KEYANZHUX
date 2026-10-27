@@ -130,6 +130,7 @@ components:
         doi: { type: [string, "null"] }
         arxiv_id: { type: [string, "null"] }
         block_id: { type: string }
+        page: { type: [integer, "null"] }
         bbox: { $ref: "#/components/schemas/BBox" }
         worth_score: { type: number, minimum: 0, maximum: 100 }
         worth_reasons:
@@ -146,6 +147,7 @@ components:
           type: array
           items: { type: string }
         block_id: { type: string }
+        page: { type: [integer, "null"] }
         bbox: { $ref: "#/components/schemas/BBox" }
         method:
           type: string
@@ -160,6 +162,7 @@ components:
         page: { type: integer }
         bbox: { $ref: "#/components/schemas/BBox" }
         path: { type: string }
+        html: { type: [string, "null"] }
 
     DocumentModel:
       type: object
@@ -665,7 +668,7 @@ paths:
 
   /documents/{id}/structure:
     get:
-      summary: meta + outline + references overview
+      summary: meta + outline + asset index + references overview
       parameters: [{ $ref: "#/components/parameters/DocId" }]
       responses:
         "200":
@@ -679,6 +682,9 @@ paths:
                   outline:
                     type: array
                     items: { $ref: "#/components/schemas/OutlineItem" }
+                  assets:
+                    type: array
+                    items: { $ref: "#/components/schemas/Asset" }
                   references:
                     type: array
                     items: { $ref: "#/components/schemas/Reference" }

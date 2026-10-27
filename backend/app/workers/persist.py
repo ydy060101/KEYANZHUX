@@ -26,7 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models.orm import AssetRow, CitationRow, Document, ReferenceRow
 from ..models.orm import Block as BlockRow
-from ..models.schemas import Asset, Block, Citation, DocumentModel, Reference
+from ..models.schemas import Asset, Block, Citation, DocMeta, DocumentModel, Reference
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +61,7 @@ async def load_window_blocks(session: AsyncSession, doc_id: str, start: int, end
     rows = await session.scalars(
         select(BlockRow)
         .where(BlockRow.doc_id == doc_id, BlockRow.page.between(start, end))
-        .order_by(BlockRow.reading_order)
+        .order_by(BlockRow.page, BlockRow.reading_order)
     )
     return [
         Block(
@@ -76,6 +76,59 @@ async def load_window_blocks(session: AsyncSession, doc_id: str, start: int, end
         )
         for row in rows
     ]
+
+
+async def load_document_blocks(session: AsyncSession, doc_id: str) -> list[Block]:
+    """Every stored block of a document, in reading order.
+
+    Used once, at the end of a long parse, to read the bibliography: it is a
+    document-wide structure that spans windows. The rows carry no image data,
+    so holding them is a few megabytes even for a 541-page book (H11).
+
+    Ordered by `(page, reading_order)`, not `reading_order` alone: each window
+    numbers its blocks from 1 (`window_parse` has no document-wide counter), so
+    ordering by that column alone interleaves all 28 windows and the
+    bibliography comes out as a quarter of its real length.
+    """
+    rows = await session.scalars(
+        select(BlockRow)
+        .where(BlockRow.doc_id == doc_id)
+        .order_by(BlockRow.page, BlockRow.reading_order)
+    )
+    return [
+        Block(
+            id=row.id,
+            type=row.type,
+            page=row.page,
+            bbox=list(row.bbox or []),
+            reading_order=row.reading_order,
+            section_id=row.section_id,
+            text=row.text,
+            confidence=row.confidence,
+        )
+        for row in rows
+    ]
+
+
+async def replace_bibliography(
+    session: AsyncSession,
+    doc_id: str,
+    references: list[Reference],
+    citations: list[Citation],
+) -> None:
+    """Replace a document's bibliography and markers wholesale (H12).
+
+    They are document-wide and have no page range of their own, so the only
+    correct update is to drop what is there and write the new set: a re-parse
+    numbers its rows from r1/c1 again and would otherwise collide with the
+    previous run's primary keys.
+    """
+    await session.execute(delete(ReferenceRow).where(ReferenceRow.doc_id == doc_id))
+    await session.execute(delete(CitationRow).where(CitationRow.doc_id == doc_id))
+    await session.flush()
+    session.add_all([_reference_row(doc_id, item) for item in references])
+    session.add_all([_citation_row(doc_id, item) for item in citations])
+    await session.flush()
 
 
 async def clear_document(session: AsyncSession, doc_id: str) -> None:
@@ -145,6 +198,7 @@ async def persist_window(
                 page=asset.page,
                 bbox=asset.bbox,
                 path=asset.path,
+                html=asset.html,
             )
             for asset in assets
         ]
@@ -235,6 +289,7 @@ async def persist_parse(session: AsyncSession, model: DocumentModel) -> None:
                 page=asset.page,
                 bbox=asset.bbox,
                 path=asset.path,
+                html=asset.html,
             )
             for asset in model.assets
         ]
@@ -244,11 +299,21 @@ async def persist_parse(session: AsyncSession, model: DocumentModel) -> None:
     doc.version = model.version or doc.version
     doc.page_count = model.page_count
     doc.source_kind = model.source_kind
+    doc.meta = meta_payload(model.meta)
     doc.status = "ready"
     await session.flush()
     # This function owns its transaction: closing the session without a commit
     # would silently discard every row above while the job still reports success.
     await session.commit()
+
+
+def meta_payload(meta: DocMeta) -> dict[str, Any]:
+    """The bibliographic metadata as stored JSON, anchors included (H01).
+
+    Serialised from the Pydantic model rather than rebuilt by hand so a field
+    added to `DocMeta` cannot be silently dropped on the way to the database.
+    """
+    return meta.model_dump(mode="json")
 
 
 def stats_of(model: DocumentModel) -> dict[str, Any]:

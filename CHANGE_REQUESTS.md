@@ -79,3 +79,67 @@ contract stays unchanged until a human approves it (AGENTS.md §2.3).
 - **Proposal:** Add the table with `(doc_id, section_id)` as its key; write it
   from the windowed parse as each window's sections close.
 - **Status:** Applied in T2.5. Awaiting human approval.
+
+## CR-006 — A `meta` column on `documents`
+
+- **Request:** Add `documents.meta` as `JSONB NOT NULL DEFAULT '{}'`.
+- **Reason:** T2.6's 概览 card shows title, authors and abstract, and each of
+  them carries the anchor H01 requires. 01 §4's `documents` table has a `title`
+  column but no place for authors, abstract or their anchors, so the reader
+  could either show unanchored metadata (forbidden by H01) or re-parse the PDF
+  on every open. The column stores the `DocMeta` model serialised whole, so a
+  field added to the model cannot be silently dropped on the way to storage.
+- **Impact:** Additive. No existing column, API path or field changes. The
+  value is written by the parse job and read by `/structure`.
+- **Proposal:** Add the column with an empty-object default.
+- **Status:** Applied in T2.6. Awaiting human approval.
+
+## CR-007 — `assets.html` for table rendering
+
+- **Request:** Add `assets.html` as nullable `text`.
+- **Reason:** T2.6 requires tables to render as HTML with a 查看原图 toggle
+  (02 §4.2). `assets` holds the crop's `path` and its `bbox`, which supports the
+  image half only; the parser already computes `table.to_html()` but there was
+  nowhere to keep it, so the reader could not show the structure without
+  re-parsing. Figures and formulas leave it NULL.
+- **Impact:** Additive and optional. Existing clients ignore the field.
+- **Proposal:** Add the nullable column and fill it for `kind = "table"`.
+- **Status:** Applied in T2.6. Awaiting human approval.
+
+## CR-008 — `section_summaries.level`
+
+- **Request:** Add `section_summaries.level` as `integer NOT NULL DEFAULT 1`.
+- **Reason:** The reader renders the outline as a tree. The depth was being
+  recovered in the API from the title's numbering (`2.1` → level 2), which
+  fails for an unnumbered heading — the book's front matter has several. The
+  parse already knows the level (it is what the heading rule decided), so it is
+  stored rather than re-guessed at read time.
+- **Impact:** Additive. No existing column changes.
+- **Proposal:** Add the column and write it from `rag/index.py`.
+- **Status:** Applied in T2.6. Awaiting human approval.
+
+## CR-009 — `page` on citation and reference payloads
+
+- **Request:** Add `page: integer | null` to the `Citation` and `Reference`
+  response objects in `openapi.yaml`.
+- **Reason:** The reader has to draw a marker's hit box on the page the marker
+  sits on, and to scroll to a bibliography entry's page. Without the field the
+  client would have to derive the page from `block_id` (`b12_3` → 12), which
+  copies an internal id scheme into TypeScript and breaks silently if the scheme
+  ever changes.
+- **Impact:** Additive and optional; existing clients ignore it. The value is
+  derived from the block id on the server, where the scheme lives.
+- **Proposal:** Add the field to both schemas and to the payload builders.
+- **Status:** Applied in T2.6. Awaiting human approval.
+
+## CR-010 — `level` on the outline payload
+
+- **Request:** Add `level: integer` to each `outline` item in
+  `GET /documents/{id}/structure`.
+- **Reason:** The outline is a tree (02 §4.2: 可折叠标题树). CR-008 stored the
+  depth on `section_summaries`, but the payload did not carry it, so the reader
+  would have to infer nesting from the title text — exactly what CR-008 exists
+  to stop doing.
+- **Impact:** Additive. The field is read from the row that already holds it.
+- **Proposal:** Add the field to the outline item schema and its builder.
+- **Status:** Applied in T2.6. Awaiting human approval.

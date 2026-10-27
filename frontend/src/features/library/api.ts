@@ -40,7 +40,7 @@ export class RequestFailed extends Error {
   }
 }
 
-function ensure<T>(result: { data?: T; error?: unknown; response: Response }): T {
+export function ensure<T>(result: { data?: T; error?: unknown; response: Response }): T {
   if (result.error !== undefined || !result.response.ok) {
     throw new RequestFailed(result.error ?? { error: { message: result.response.statusText } });
   }

@@ -147,3 +147,77 @@ def test_asset_endpoint_serves_png_bytes(tmp_path: Path) -> None:
     assert status == 200, documents_api.__name__
     assert head == b"\x89PNG\r\n\x1a\n"
     assert media.startswith("image/png")
+
+
+def test_a_table_exposes_html_when_the_source_has_structure(model: Any) -> None:
+    """T2.6 renders a table's cells; the crop stays the fallback (02 §4.2)."""
+    tables = [asset for asset in model.assets if asset.kind == "table"]
+    with_html = [asset for asset in tables if asset.html]
+    assert with_html, "find_tables should read at least one of this paper's four tables"
+    assert all("<td" in asset.html or "<th" in asset.html for asset in with_html if asset.html)
+    # The crop is still written for every table, HTML or not: it is what the
+    # reader falls back to when the extracted structure is wrong.
+    assert all(Path(asset.path).is_file() for asset in tables)
+
+
+def test_figures_and_formulas_carry_no_table_html(model: Any) -> None:
+    others = [asset for asset in model.assets if asset.kind != "table"]
+    assert all(asset.html is None for asset in others)
+
+
+def _block(text: str, page: int = 1, block_id: str = "b1_1") -> Any:
+    from app.models.schemas import Block
+
+    return Block(id=block_id, type="caption", page=page, bbox=[0.0, 0.0, 10.0, 10.0], reading_order=1, text=text)
+
+
+def test_a_caption_without_a_colon_is_still_a_caption() -> None:
+    """A textbook sets "Figure 1.1 Machine learning is an area of…".
+
+    The 541-page book prints 290 captions this way and not one colon, so a
+    pattern that requires punctuation found no figure or table at all for it
+    and the reader's two lists came up empty.
+    """
+    captions = find_captions(
+        [
+            _block("Figure 1.1 Machine learning is an area of artificial intelligence."),
+            _block("Table 2.1 Results on the development set.", block_id="b1_2"),
+        ]
+    )
+    assert [(caption.kind, caption.label) for caption in captions] == [("figure", "1.1"), ("table", "2.1")]
+
+
+def test_a_sentence_naming_a_figure_is_not_a_caption() -> None:
+    """Without punctuation, the capital is what separates the two.
+
+    The book prints both on facing pages: "Figure 1.1 Machine learning…" is
+    the caption, "Figure 1.2 depicts several regression problems" is prose.
+    """
+    captions = find_captions(
+        [
+            _block("Figure 1.2 depicts several regression and classification problems."),
+            _block("Figure 1.2 Regression and classification problems.", block_id="b1_2"),
+        ]
+    )
+    assert [caption.text for caption in captions] == ["Regression and classification problems."]
+
+
+def test_the_detected_table_must_sit_inside_the_crop(model: Any) -> None:
+    """The `text` strategy returns one box spanning the whole page.
+
+    It overlaps every region on that page, so an overlap test accepted it for
+    each table in turn and the reader was handed the page's body text as the
+    table's cells. A table that is bigger than its crop is a different object.
+    """
+    from app.ingest.assets import _inside_score
+
+    crop = (72.0, 251.0, 526.0, 519.0)
+    assert _inside_score((72.0, 240.0, 526.0, 530.0), crop) is not None
+    assert _inside_score((72.0, 66.0, 526.0, 765.0), crop) is None, "the whole page is not this table"
+    assert _inside_score((540.0, 251.0, 580.0, 300.0), crop) is None, "another column is not this table"
+
+
+def test_every_table_strategy_is_tried(model: Any) -> None:
+    """A ruled table needs `lines_strict`; a borderless one is only `text`."""
+    tables = [asset for asset in model.assets if asset.kind == "table"]
+    assert any(asset.html for asset in tables), "the paper's bordered tables should be read as HTML"

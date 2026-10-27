@@ -43,9 +43,16 @@ class SectionSummary:
     page: int
     summary: str
     block_ids: list[str] = field(default_factory=list)
+    # Depth in the heading tree, carried from the outline so a book whose
+    # headings are not numbered still gets a nested tree (T2.6).
+    level: int = 1
 
 
-def summarise_sections(blocks: list[Block], titles: dict[str, str]) -> list[SectionSummary]:
+def summarise_sections(
+    blocks: list[Block],
+    titles: dict[str, str],
+    levels: dict[str, int] | None = None,
+) -> list[SectionSummary]:
     """Group blocks by section and summarise each from its own text.
 
     `titles` maps a section id to the heading text the outline gave it; a
@@ -64,6 +71,7 @@ def summarise_sections(blocks: list[Block], titles: dict[str, str]) -> list[Sect
                 title=titles.get(section_id, ""),
                 page=block.page,
                 summary="",
+                level=(levels or {}).get(section_id, 1),
             )
             order.append(section_id)
         sections[section_id].block_ids.append(block.id)

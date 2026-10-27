@@ -143,6 +143,21 @@ def test_adjacent_links_of_one_marker_still_merge() -> None:
     assert "[4, 25, 26, 20]" in markers
 
 
+def test_author_year_markers_are_not_merged_with_their_neighbours() -> None:
+    """Only numeric markers split across links; a full marker never joins one.
+
+    "(Gregor et al., 2016; Gulrajani et al., 2016)" is two links, each already
+    holding a whole citation, and a semicolon sits between them. Merging on
+    that separator produced a 77-character "marker" — longer than the
+    `citations.marker` column, so the book's parse died on the insert — and
+    claimed one citation where the reader sees three.
+    """
+    model = parse_pdf(FIXTURES / "UnderstandingDeepLearning_02_09_26_C.pdf", "doc-cite-book-merge").model
+    longest = max(len(citation.marker) for citation in model.citations)
+    assert longest <= 64, f"a marker spans {longest} characters"
+    assert not any(";" in citation.marker for citation in model.citations)
+
+
 def test_alpha_keys_do_not_collapse_the_bibliography() -> None:
     """GPT-3 numbers nothing: 144 entries keyed "[VSP+17]"."""
     model = parse_pdf(GPT3, "doc-cite-gpt3").model
@@ -160,6 +175,66 @@ def test_a_numbered_entry_that_wraps_is_one_reference() -> None:
     model = parse_pdf(V1, "doc-cite-wrap").model
     short = [reference for reference in model.references if len(reference.raw) < 40]
     assert not short, [reference.raw for reference in short]
+
+
+def test_interval_notation_is_not_a_citation() -> None:
+    """`sig[z] ∈ [0, 1]` is a range, not a reference.
+
+    The regex fallback reads brackets out of the text, and a maths text is
+    full of them. A marker only counts when its number names an entry that
+    exists, so "[0, 1]" and "r[0]" cannot become citations pointing at r0.
+    """
+    from app.ingest.citations import _regex_citations
+    from app.models.schemas import Block
+
+    block = Block(
+        id="b1_1",
+        type="paragraph",
+        page=1,
+        bbox=[72.0, 72.0, 500.0, 120.0],
+        reading_order=1,
+        section_id=None,
+        text="The sigmoid maps z to sig[z] ∈ [0, 1], normalized by r[0] and log[1].",
+    )
+    citations = _regex_citations([block], set(), set(), {"r1", "r2"}, 0)
+    assert citations == []
+
+
+def test_a_marker_hit_box_covers_the_marker_not_the_paragraph() -> None:
+    """A paragraph-sized box would swallow clicks meant for the page."""
+    from app.ingest.citations import _regex_citations
+    from app.models.schemas import Block
+
+    block = Block(
+        id="b1_1",
+        type="paragraph",
+        page=1,
+        bbox=[72.0, 72.0, 500.0, 200.0],
+        reading_order=1,
+        section_id=None,
+        text="As shown in earlier work [3], the result holds.",
+    )
+    citations = _regex_citations([block], set(), set(), {"r3"}, 0)
+    assert len(citations) == 1
+    x0, y0, x1, y1 = citations[0].bbox
+    assert y1 - y0 <= 20, "the box must be one line high, not the whole block"
+    assert 72.0 < x0 < 500.0
+    assert x1 - x0 < 60
+
+
+def test_the_book_cites_nothing_by_regex() -> None:
+    """The 541-page book is author-year: no numeric markers, no fake ones.
+
+    Before the check against real entries this book produced 24 citations
+    pointing at r0 and r1, neither of which exists, every one of them an
+    interval or an index in the prose.
+    """
+    model = parse_pdf(FIXTURES / "UnderstandingDeepLearning_02_09_26_C.pdf", "doc-cite-book").model
+    regex = [item for item in model.citations if item.method == "regex"]
+    assert regex == [], [item.marker for item in regex[:5]]
+    known = {reference.id for reference in model.references}
+    dangling = {ref for item in model.citations for ref in item.ref_ids if ref not in known}
+    assert dangling == set()
 
 
 def test_references_are_extracted_from_the_job_path() -> None:
@@ -190,8 +265,15 @@ def test_citation_endpoint_returns_markers_and_coverage() -> None:
     parsed = parse_pdf(V1, "doc-cite-api").model
 
     async def run() -> tuple[list[Any], dict[str, Any]]:
+        from sqlalchemy import delete
+
         factory = get_session_factory()
         async with factory() as session:
+            # Re-runnable: a previous run (or a concurrent one) leaves the
+            # fixed id behind, and the insert would collide (H12).
+            for table in (BlockRow, ReferenceRow, CitationRow, AssetRow):
+                await session.execute(delete(table).where(table.doc_id == "doc-cite-api"))
+            await session.execute(delete(Document).where(Document.id == "doc-cite-api"))
             session.add(
                 Document(
                     id="doc-cite-api",

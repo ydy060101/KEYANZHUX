@@ -133,3 +133,41 @@ body {
   outline: 2px solid var(--primary);
   outline-offset: 2px;
 }
+
+/* pdf.js text layer (T2.6). The layer sits exactly over the canvas and its
+   spans are transparent: the glyphs the user sees come from the canvas, while
+   the spans provide selection, copy and the citation hit boxes' alignment. */
+.pdf-text-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  line-height: 1;
+  text-align: initial;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.pdf-text-layer-inner {
+  position: absolute;
+  inset: 0;
+  color: transparent;
+  transform-origin: 0 0;
+}
+
+.pdf-text-layer-inner span,
+.pdf-text-layer-inner br {
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0 0;
+}
+
+.pdf-text-layer-inner ::selection {
+  background: var(--hl);
+}
+
+.pdf-text-layer-inner .highlight {
+  background: var(--hl);
+  border-radius: 2px;
+}
+

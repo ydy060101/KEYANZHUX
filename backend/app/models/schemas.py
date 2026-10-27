@@ -119,6 +119,9 @@ class Asset(BaseModel):
     page: int
     bbox: list[float]
     path: str
+    # A table's structure when the PDF exposes one (T2.6 renders it as HTML
+    # with the crop as the fallback). None for figures and formulas.
+    html: str | None = None
 
 
 class DocumentModel(BaseModel):

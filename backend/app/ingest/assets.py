@@ -13,20 +13,27 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, cast
 
 from ..models.schemas import Asset, Block
 from . import pdfio, storage
 
 logger = logging.getLogger(__name__)
 
-# A caption's label ends in a colon, or in a full stop followed by a space.
-# Without that second condition the pattern also matches prose: "Table 2.1
-# shows the sizes" parses as label "2" + separator "." + text "1 shows the
-# sizes", which is how a real caption gets misread as a sentence and dropped.
+# A caption's label ends in a colon, in a full stop followed by a space, or in
+# nothing at all. The last form is not sloppiness: a textbook sets "Figure 1.1
+# Machine learning is an area of…" with the label and the title in one style,
+# and the 541-page book has 290 such captions and no colon anywhere. Without
+# this alternative the reader's figure and table lists are empty for it.
+#
+# The punctuation is captured separately (`group(3)`), because a bare space
+# also matches prose — "Figure 1.2 depicts several problems" — and that case
+# is told apart by the capital in `_caption_of`.
 _CAPTION = re.compile(
-    r"^(figure|table|fig\.)\s*(\d+(?:\.\d+)*)\s*(?::|\.(?=\s))\s*(.*)$",
+    r"^(figure|table|fig\.)\s*(\d+(?:\.\d+)*)\s*([:.]?)\s+(.*)$",
     re.IGNORECASE | re.DOTALL,
 )
 # A formula line: mostly symbols, digits and single letters, not prose.
@@ -55,11 +62,18 @@ def _caption_of(block: Block) -> Caption | None:
     match = _CAPTION.match(" ".join(block.text.split()))
     if match is None:
         return None
+    # With no punctuation after the number, the caption and the prose sentence
+    # "Figure 1.2 depicts several regression problems" have the same shape.
+    # What separates them is the capital: a title starts a new phrase, a
+    # sentence continues the old one. The book prints both, on facing pages.
+    text = match.group(4).strip()
+    if not match.group(3) and not text[:1].isupper():
+        return None
     kind = "figure" if match.group(1).lower().startswith("fig") else "table"
     return Caption(
         kind=kind,
         label=match.group(2),
-        text=match.group(3).strip(),
+        text=text,
         page=block.page,
         block=block,
     )
@@ -71,8 +85,8 @@ def find_captions(blocks: list[Block]) -> list[Caption]:
     "Table 2 summarizes our results" reads like a caption but is body text, so
     a caption must not end like a sentence. Length is not the test: GPT-3 and
     BERT both set captions of 500-900 characters, and a length cap dropped
-    them. What separates caption from prose is the label and its separator,
-    which `_CAPTION` now requires.
+    them. What separates caption from prose is the label, its separator, and
+    the capital that follows it (see `_caption_of`).
     """
     found: list[Caption] = []
     for block in blocks:
@@ -258,13 +272,84 @@ def _write_asset(
     asset_id = f"{caption.kind[:1]}{caption.label}"
     path = out_dir / f"{asset_id}.png"
     path.write_bytes(pdfio.crop_png(page, region))
+    kind = "figure" if caption.kind == "figure" else "table"
     return Asset(
         id=asset_id,
-        kind="figure" if caption.kind == "figure" else "table",
+        kind=kind,
         page=caption.page,
         bbox=list(region),
         path=str(path),
+        html=_table_html(page, region) if kind == "table" else None,
     )
+
+
+def _table_html(page: pdfio.Page, region: tuple[float, float, float, float]) -> str | None:
+    """The table's cells as HTML, when the source exposes a structure.
+
+    The reader shows this with the page crop one click away, so a table that
+    the detector cannot see keeps its crop rather than losing the entry. An
+    HTML failure is not an extraction failure, hence the None rather than an
+    exception (H08).
+
+    Two things are needed for the cells to be the *right* cells. First, every
+    strategy is tried: a ruled table needs `lines_strict`, but the borderless
+    tables most papers print (a header row, then rules only under it) are
+    found only by `lines` or `text`, and the default found nothing on 11 of
+    the 15 pages checked. Second, the detected table must sit *inside* the
+    crop — the `text` strategy happily returns one box spanning the whole page,
+    which overlaps every region on it and would hand the reader the entire
+    page as a table.
+    """
+    best: tuple[float, Any] | None = None
+    for strategy in ("lines_strict", "lines", "text"):
+        try:
+            # PyMuPDF ships no type hints for the table detector, so its result
+            # is treated as Any here rather than leaking the untyped call
+            # outward (H14).
+            find_tables = cast(Callable[..., Any], page.find_tables)
+            found = find_tables(strategy=strategy)
+        except Exception as exc:  # pragma: no cover - detector internals
+            logger.debug("table detection failed on page %s (%s): %s", page.number + 1, strategy, exc)
+            continue
+        for table in found.tables:
+            score = _inside_score(tuple(table.bbox), region)
+            if score is None:
+                continue
+            if best is None or score > best[0]:
+                best = (score, table)
+    if best is None:
+        return None
+    try:
+        return str(best[1].to_html())
+    except Exception as exc:  # pragma: no cover - detector internals
+        logger.debug("table html failed on page %s: %s", page.number + 1, exc)
+        return None
+
+
+def _inside_score(box: tuple[float, ...], region: tuple[float, float, float, float]) -> float | None:
+    """How well a detected table fits the crop, or None if it is not that table.
+
+    A table may overhang its crop a little — the caption's box stops at the
+    last row, the detector's box at the last rule — but one that is larger than
+    the crop, or mostly outside it, is a different object (the whole page, the
+    neighbouring column).
+    """
+    area = (box[2] - box[0]) * (box[3] - box[1])
+    region_area = (region[2] - region[0]) * (region[3] - region[1])
+    if area <= 0 or region_area <= 0 or area > region_area * _MAX_TABLE_OVERHANG:
+        return None
+    width = min(box[2], region[2]) - max(box[0], region[0])
+    height = min(box[3], region[3]) - max(box[1], region[1])
+    if width <= 0 or height <= 0:
+        return None
+    inside = (width * height) / area
+    return inside if inside >= _MIN_TABLE_INSIDE else None
+
+
+# A detected table may be up to this much larger than the crop it is matched to.
+_MAX_TABLE_OVERHANG = 1.5
+# ...and this share of it must lie within the crop.
+_MIN_TABLE_INSIDE = 0.7
 
 
 def _looks_like_formula(block: Block, table_regions: list[tuple[int, list[float]]]) -> bool:

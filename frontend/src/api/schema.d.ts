@@ -217,7 +217,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** meta + outline + references overview */
+        /** meta + outline + asset index + references overview */
         get: {
             parameters: {
                 query?: never;
@@ -238,6 +238,7 @@ export interface paths {
                         "application/json": {
                             meta?: components["schemas"]["DocMeta"];
                             outline?: components["schemas"]["OutlineItem"][];
+                            assets?: components["schemas"]["Asset"][];
                             references?: components["schemas"]["Reference"][];
                         };
                     };
@@ -1676,6 +1677,7 @@ export interface components {
             doi?: string | null;
             arxiv_id?: string | null;
             block_id?: string;
+            page?: number | null;
             bbox?: components["schemas"]["BBox"];
             worth_score?: number;
             worth_reasons?: string[];
@@ -1685,6 +1687,7 @@ export interface components {
             marker: string;
             ref_ids?: string[];
             block_id: string;
+            page?: number | null;
             bbox?: components["schemas"]["BBox"];
             /** @enum {string} */
             method?: "link_annotation" | "regex";
@@ -1696,6 +1699,7 @@ export interface components {
             page: number;
             bbox: components["schemas"]["BBox"];
             path: string;
+            html?: string | null;
         };
         DocumentModel: {
             /** Format: uuid */
@@ -1734,6 +1738,10 @@ export interface components {
                 tables?: number;
                 formulas?: number;
                 references?: number;
+                citations?: number;
+                cited_references?: number;
+                uncited_references?: number;
+                dangling_citations?: number;
             };
         };
         DocumentPage: {

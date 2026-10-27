@@ -47,6 +47,11 @@ def section_titles(outline: list[OutlineItem]) -> dict[str, str]:
     return {item.id: item.title for item in outline}
 
 
+def section_levels(outline: list[OutlineItem]) -> dict[str, int]:
+    """Section id → depth, from the accumulated outline (T2.6)."""
+    return {item.id: item.level for item in outline}
+
+
 async def write_index(
     session: AsyncSession,
     doc_id: str,
@@ -97,7 +102,7 @@ async def _write_sections(
     window 4 is rewritten when window 4 closes it, and the sections of earlier
     windows keep the rows they already have.
     """
-    sections = summarise_sections(blocks, section_titles(outline))
+    sections = summarise_sections(blocks, section_titles(outline), section_levels(outline))
     if not sections:
         return
     ids = [section.section_id for section in sections]
@@ -114,6 +119,7 @@ def _section_row(doc_id: str, section: SectionSummary) -> SectionSummaryRow:
         doc_id=doc_id,
         section_id=section.section_id,
         title=section.title,
+        level=section.level,
         page=section.page,
         summary=section.summary,
         block_ids=section.block_ids,

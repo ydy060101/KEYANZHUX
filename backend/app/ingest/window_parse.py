@@ -17,12 +17,10 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
-from ..models.schemas import Asset, Block, Citation, OutlineItem, Reference
+from ..models.schemas import Asset, Block, OutlineItem
 from . import pdfio
 from .assets import extract_assets
-from .citations import Coverage, build_citations
 from .parser import page_blocks, to_model_blocks
-from .references import extract_references
 from .sections import SectionTracker
 from .windows import Window
 
@@ -37,10 +35,6 @@ class WindowResult:
     blocks: list[Block]
     assets: list[Asset]
     outline: list[OutlineItem] = field(default_factory=list)
-    # Only the window that closes the bibliography fills these in.
-    references: list[Reference] = field(default_factory=list)
-    citations: list[Citation] = field(default_factory=list)
-    coverage: Coverage | None = None
 
 
 def parse_window(
@@ -51,17 +45,16 @@ def parse_window(
     *,
     threshold: int,
     sizes: dict[str, float] | None = None,
-    with_references: bool = False,
 ) -> WindowResult:
     """Parse the pages of one window.
 
     `tracker` carries the sections and headings accumulated so far; it is
     mutated here so the next window continues where this one stopped.
 
-    References and citations are document-wide: a bibliography runs across
-    pages and a marker's target may sit outside the window. So they are read
-    only on the window that closes the bibliography (`with_references`), and
-    from the blocks of that window — the bibliography's own pages.
+    The bibliography is not read here: it is document-wide, starts at a
+    heading and runs to the appendix across pages that need not sit in one
+    window. `parse_task._parse_long` reads it once, from the stored rows, after
+    the last window (T2.6).
     """
     blocks: list[Block] = []
     for page_no in window.page_numbers:
@@ -82,21 +75,11 @@ def parse_window(
     tracker.assign(blocks, sizes)
     assets = extract_assets(doc, blocks, doc_id)
 
-    references: list[Reference] = []
-    citations: list[Citation] = []
-    coverage: Coverage | None = None
-    if with_references:
-        references = extract_references(blocks, doc_id)
-        citations, coverage = build_citations(doc, blocks, references, page_limit=window.end)
-
     return WindowResult(
         window=window,
         blocks=blocks,
         assets=assets,
         outline=tracker.outline(),
-        references=references,
-        citations=citations,
-        coverage=coverage,
     )
 
 

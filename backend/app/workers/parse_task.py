@@ -169,7 +169,8 @@ async def _parse_long(
         overlap_ratio=settings.chunk_overlap_ratio,
     )
 
-    total_blocks = total_references = total_citations = total_assets = 0
+    total_blocks = total_assets = 0
+    total_references = total_citations = 0
     coverage: Any = None
     # Metadata comes from the opening pages, which are in the first window;
     # holding the whole book to read them again at the end would defeat the
@@ -210,7 +211,6 @@ async def _parse_long(
             doc_id,
             threshold=settings.scanned_page_char_threshold,
             sizes=sizes,
-            with_references=window is windows[-1],
         )
         if window.index == 1:
             first_blocks = list(result.blocks)
@@ -222,9 +222,10 @@ async def _parse_long(
                 result.blocks,
                 result.assets,
                 first_window=window.index == 1,
-                last_window=window is windows[-1],
-                references=result.references,
-                citations=result.citations,
+                # The bibliography is read once, below, after the last window:
+                # it runs across pages that need not fall inside one window,
+                # and the book's last window is a single page.
+                last_window=False,
             )
             await write_index(session, doc_id, result.blocks, result.outline, drafts)
             await JobService(session).progress(
@@ -237,10 +238,6 @@ async def _parse_long(
             )
         total_blocks += len(result.blocks)
         total_assets += len(result.assets)
-        total_references += len(result.references)
-        total_citations += len(result.citations)
-        if result.coverage is not None:
-            coverage = result.coverage
         logger.info(
             "window %s done: blocks=%d assets=%d (rss kept flat by dropping it)",
             window.label,
@@ -251,7 +248,24 @@ async def _parse_long(
         del result
 
     async with factory() as session:
-        await JobService(session).progress(job_id, stage="finish", progress=_DONE)
+        await JobService(session).progress(job_id, stage="bibliography", progress=_INDEX)
+        # The bibliography is document-wide: it starts at the "References"
+        # heading and runs to the appendix, across pages that need not sit in
+        # one window (this book's last window is a single page). It is read
+        # here from the stored rows, so it sees the whole document without the
+        # parse ever holding it.
+        stored_blocks = await persist.load_document_blocks(session, doc_id)
+        references = extract_references(stored_blocks, doc_id)
+        citations, coverage = build_citations(doc_handle, stored_blocks, references)
+        total_references = len(references)
+        total_citations = len(citations)
+        # Replace, don't append (H12). A re-parse of the same document — a
+        # retried job, or a re-upload that dedup maps back to this id — finds
+        # the previous run's rows still there, and their ids are numbered from
+        # c1, so appending collides on the primary key.
+        await persist.replace_bibliography(session, doc_id, references, citations)
+        del stored_blocks
+
         final = chunker.flush()
         if final:
             await write_index(session, doc_id, [], tracker.outline(), final)
@@ -260,6 +274,7 @@ async def _parse_long(
             raise ValueError(f"文档不存在：{doc_id}")
         meta = await extract_meta_llm(doc_handle, first_blocks, doc_id, get_gateway())
         doc.title = meta.title or doc.title
+        doc.meta = persist.meta_payload(meta)
         doc.page_count = total_pages
         doc.source_kind = detect_source_kind(pages, settings.scanned_page_char_threshold)
         doc.status = "ready"

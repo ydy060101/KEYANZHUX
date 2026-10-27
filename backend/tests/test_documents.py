@@ -248,3 +248,40 @@ async def test_version_diff_of_unparsed_docs_is_not_reported_as_unchanged(
     assert "尚未解析" in body["summary"]
     assert "无任何变化" not in body["summary"]
     assert body["sections"] == []
+
+
+async def test_list_carries_the_card_counts(client: AsyncClient, session: Any) -> None:
+    """The library card shows "N 块 · M 篇参考文献", so the list must carry them.
+
+    It used to return `stats: {}` for every document: the counters were only
+    computed by the detail endpoint, so the card silently rendered neither.
+    """
+    from app.models.orm import Block as BlockRow
+    from app.models.orm import CitationRow, ReferenceRow
+
+    doc_id = (await client.post("/api/v1/documents", files=_pdf())).json()[0]["doc_id"]
+    session.add_all(
+        [
+            BlockRow(doc_id=doc_id, id="b1_1", type="paragraph", page=1, bbox=[0, 0, 1, 1], reading_order=1, text="a"),
+            BlockRow(doc_id=doc_id, id="b1_2", type="paragraph", page=1, bbox=[0, 1, 1, 2], reading_order=2, text="b"),
+            ReferenceRow(id=f"{doc_id}:r1", doc_id=doc_id, index=1, raw="X 2020."),
+            CitationRow(
+                id=f"{doc_id}:c1",
+                doc_id=doc_id,
+                marker="[1]",
+                ref_ids=[f"{doc_id}:r1"],
+                block_id="b1_1",
+                bbox=[0, 0, 1, 1],
+                method="regex",
+            ),
+        ]
+    )
+    await session.commit()
+
+    items = (await client.get("/api/v1/documents")).json()["items"]
+    item = next(entry for entry in items if entry["id"] == doc_id)
+    assert item["stats"]["blocks"] == 2
+    assert item["stats"]["references"] == 1
+    assert item["stats"]["citations"] == 1
+    assert item["stats"]["cited_references"] == 1
+    assert item["stats"]["dangling_citations"] == 0

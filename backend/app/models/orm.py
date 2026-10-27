@@ -58,6 +58,12 @@ class Document(Base):
     page_count: Mapped[int] = mapped_column(Integer, default=0)
     tags: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
     file_path: Mapped[str] = mapped_column(Text)
+    # The extracted bibliographic metadata (authors with affiliations, abstract,
+    # year, venue) exactly as the parse produced it, anchors included (CR-006).
+    # `title` above stays a column because the library list sorts and searches
+    # on it; everything else is read only by the reader's structure panel, so a
+    # JSON document is a better fit than eight more columns.
+    meta: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     created_by: Mapped[str] = mapped_column(String(64), default="default")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
     parsed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -135,6 +141,10 @@ class SectionSummaryRow(Base):
     doc_id: Mapped[str] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"), primary_key=True)
     section_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     title: Mapped[str] = mapped_column(Text, default="")
+    # Depth in the heading tree, from the tracker that placed it (T2.6): a
+    # book with no numbered headings cannot have its level recovered from the
+    # title text, and the outline needs it to indent the tree.
+    level: Mapped[int] = mapped_column(Integer, default=1)
     page: Mapped[int] = mapped_column(Integer, default=1)
     summary: Mapped[str] = mapped_column(Text, default="")
     block_ids: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
@@ -179,6 +189,8 @@ class AssetRow(Base):
     page: Mapped[int] = mapped_column(Integer)
     bbox: Mapped[list[float]] = mapped_column(ARRAY(Float))
     path: Mapped[str] = mapped_column(Text)
+    # A table's structure as HTML, when the source exposed one (CR-006).
+    html: Mapped[str | None] = mapped_column(Text)
 
 
 class Job(Base):

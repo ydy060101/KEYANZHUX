@@ -21,12 +21,15 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 BACKEND = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BACKEND))
 
 from sqlalchemy import inspect, text  # noqa: E402
+from sqlalchemy.ext.asyncio import AsyncEngine  # noqa: E402
 
 from app import db  # noqa: E402
 from app.models.orm import Base  # noqa: E402
@@ -35,6 +38,20 @@ from app.models.orm import Base  # noqa: E402
 # empty. Each entry says why it is expected to be empty.
 REBUILDABLE = {
     "chunks": "written for the first time in T2.5",
+}
+
+# Columns added after a table was created. `create_all` never alters an
+# existing table, so an additive column needs an explicit ALTER.
+ADDED_COLUMNS = {
+    "documents": {
+        "meta": "jsonb NOT NULL DEFAULT '{}'::jsonb",
+    },
+    "assets": {
+        "html": "text",
+    },
+    "section_summaries": {
+        "level": "integer NOT NULL DEFAULT 1",
+    },
 }
 
 
@@ -46,16 +63,21 @@ async def main(dry_run: bool) -> int:
     missing = [name for name in Base.metadata.tables if name not in existing]
     rebuild: list[str] = []
     for name in REBUILDABLE:
-        if name in existing:
-            async with engine.connect() as conn:
-                rows = await conn.scalar(text(f'SELECT count(*) FROM "{name}"'))
-            if rows:
-                print(f"refusing to rebuild {name}: it holds {rows} rows")
-                return 1
-            rebuild.append(name)
+        if name not in existing:
+            continue
+        if not await _needs_rebuild(engine, name):
+            continue
+        async with engine.connect() as conn:
+            rows = await conn.scalar(text(f'SELECT count(*) FROM "{name}"'))
+        if rows:
+            print(f"refusing to rebuild {name}: it holds {rows} rows")
+            return 1
+        rebuild.append(name)
 
     print(f"missing tables: {missing or 'none'}")
     print(f"tables to rebuild: {rebuild or 'none'}")
+    added = await _missing_columns(engine)
+    print(f"columns to add: {added or 'none'}")
     if dry_run:
         print("dry run: nothing changed")
         await engine.dispose()
@@ -66,12 +88,49 @@ async def main(dry_run: bool) -> int:
             await conn.execute(text(f'DROP TABLE IF EXISTS "{name}"'))
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    for table, column, ddl in added:
+        async with engine.begin() as conn:
+            await conn.execute(text(f'ALTER TABLE "{table}" ADD COLUMN "{column}" {ddl}'))
 
     async with engine.connect() as conn:
         after = set(await conn.run_sync(lambda sync: inspect(sync).get_table_names()))
     print(f"schema now has {len(after)} tables")
     await engine.dispose()
     return 0
+
+
+async def _needs_rebuild(engine: AsyncEngine, table: str) -> bool:
+    """Whether a stored table still has a shape the models no longer describe.
+
+    Rebuilding is destructive, so it happens only when the table really
+    differs from the model — otherwise every run after the first would refuse
+    to do anything once the rebuilt table had been filled with real rows.
+    """
+    async with engine.connect() as conn:
+        stored = await conn.run_sync(_columns_of(table))
+    declared = {column.name for column in Base.metadata.tables[table].columns}
+    return stored != declared
+
+
+def _columns_of(table: str) -> Callable[[Any], set[str]]:
+    def read(sync: Any) -> set[str]:
+        return {str(col["name"]) for col in inspect(sync).get_columns(table)}
+
+    return read
+
+
+async def _missing_columns(engine: AsyncEngine) -> list[tuple[str, str, str]]:
+    """Declared columns that an existing table does not have yet."""
+    out: list[tuple[str, str, str]] = []
+    for table, columns in ADDED_COLUMNS.items():
+        async with engine.connect() as conn:
+            present = await conn.run_sync(_columns_of(table))
+        if not present:
+            continue  # the table itself is missing; create_all will build it whole
+        for column, ddl in columns.items():
+            if column not in present:
+                out.append((table, column, ddl))
+    return out
 
 
 if __name__ == "__main__":

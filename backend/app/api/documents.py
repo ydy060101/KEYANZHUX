@@ -21,9 +21,8 @@ from ..deps import SessionDep, UserIdDep
 from ..errors import NotFound
 from ..ingest import storage
 from ..ingest.validate import validate_upload
-from ..models.orm import AssetRow, CitationRow, Document, ReferenceRow
+from ..models.orm import AssetRow, CitationRow, Document, ReferenceRow, SectionSummaryRow
 from ..models.orm import Block as BlockRow
-from ..models.schemas import BlockType
 from ..workers import queue
 
 logger = logging.getLogger(__name__)
@@ -60,32 +59,80 @@ def _document_payload(doc: Document, stats: dict[str, int] | None = None) -> dic
 
 
 async def _stats(session: AsyncSession, doc_id: str) -> dict[str, int]:
-    """Counts for the library card.
+    """Counts for one document's card (the detail endpoint)."""
+    return (await _stats_many(session, [doc_id]))[doc_id]
+
+
+def _empty_stats() -> dict[str, int]:
+    """The counters a card shows, all zero before any row is counted."""
+    return {
+        "blocks": 0,
+        "figures": 0,
+        "tables": 0,
+        "formulas": 0,
+        "references": 0,
+        "citations": 0,
+        "cited_references": 0,
+        "uncited_references": 0,
+        "dangling_citations": 0,
+    }
+
+
+async def _stats_many(session: AsyncSession, doc_ids: list[str]) -> dict[str, dict[str, int]]:
+    """The library card's counts for a page of documents, in three queries.
+
+    The list used to return an empty `stats` for every document, so the card's
+    "N 块 · M 篇参考文献" never rendered. Asking per document would be an N+1
+    over the page, so the counts are grouped by document instead.
 
     Figures, tables and formulas are counted from `assets`, not from block
     types: the parser types their captions as `caption` and keeps the graphic
     itself as an asset, so counting blocks would always report zero.
     """
-    rows = await session.execute(
-        select(BlockRow.type, func.count()).where(BlockRow.doc_id == doc_id).group_by(BlockRow.type)
+    if not doc_ids:
+        return {}
+    out: dict[str, dict[str, int]] = {doc_id: _empty_stats() for doc_id in doc_ids}
+
+    block_rows = await session.execute(
+        select(BlockRow.doc_id, func.count()).where(BlockRow.doc_id.in_(doc_ids)).group_by(BlockRow.doc_id)
     )
-    counts: dict[BlockType, int] = {row[0]: row[1] for row in rows}
-    assets = await session.execute(
-        select(AssetRow.kind, func.count()).where(AssetRow.doc_id == doc_id).group_by(AssetRow.kind)
+    for doc_id, count in block_rows:
+        out[doc_id]["blocks"] = count
+
+    asset_rows = await session.execute(
+        select(AssetRow.doc_id, AssetRow.kind, func.count())
+        .where(AssetRow.doc_id.in_(doc_ids))
+        .group_by(AssetRow.doc_id, AssetRow.kind)
     )
-    asset_counts = {kind: count for kind, count in assets}
-    references = await session.scalar(
-        select(func.count()).select_from(ReferenceRow).where(ReferenceRow.doc_id == doc_id)
+    for doc_id, kind, count in asset_rows:
+        if kind in {"figure", "table", "formula"}:
+            out[doc_id][f"{kind}s"] = count
+
+    reference_rows = await session.execute(
+        select(ReferenceRow.doc_id, ReferenceRow.id).where(ReferenceRow.doc_id.in_(doc_ids))
     )
-    citations = await _citation_coverage(session, doc_id)
-    return {
-        "blocks": sum(counts.values()),
-        "figures": asset_counts.get("figure", 0),
-        "tables": asset_counts.get("table", 0),
-        "formulas": asset_counts.get("formula", 0),
-        "references": references or 0,
-        **citations,
-    }
+    known: dict[str, set[str]] = {}
+    for doc_id, ref_id in reference_rows:
+        known.setdefault(doc_id, set()).add(ref_id.split(":", 1)[-1])
+        out[doc_id]["references"] += 1
+
+    citation_rows = await session.execute(
+        select(CitationRow.doc_id, CitationRow.ref_ids).where(CitationRow.doc_id.in_(doc_ids))
+    )
+    cited: dict[str, set[str]] = {}
+    for doc_id, ref_ids in citation_rows:
+        out[doc_id]["citations"] += 1
+        bucket = cited.setdefault(doc_id, set())
+        for ref in ref_ids or []:
+            bucket.add(ref.split(":", 1)[-1])
+
+    for doc_id in doc_ids:
+        used = cited.get(doc_id, set())
+        names = known.get(doc_id, set())
+        out[doc_id]["cited_references"] = len(used & names)
+        out[doc_id]["uncited_references"] = len(names - used)
+        out[doc_id]["dangling_citations"] = len(used - names)
+    return out
 
 
 async def _citation_coverage(session: AsyncSession, doc_id: str) -> dict[str, int]:
@@ -135,10 +182,13 @@ async def list_documents(
     if tag:
         stmt = stmt.where(Document.tags.contains([tag]))
     total = await session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
-    rows = await session.scalars(
-        stmt.order_by(Document.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
+    rows = list(
+        await session.scalars(
+            stmt.order_by(Document.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
+        )
     )
-    items = [_document_payload(doc) for doc in rows]
+    stats = await _stats_many(session, [doc.id for doc in rows])
+    items = [_document_payload(doc, stats.get(doc.id)) for doc in rows]
     return {"items": items, "total": total, "page": page, "page_size": page_size}
 
 
@@ -348,48 +398,107 @@ async def get_asset(doc_id: str, asset_id: str, session: SessionDep) -> Response
 
 @router.get("/documents/{doc_id}/structure")
 async def get_structure(doc_id: str, session: SessionDep) -> dict[str, Any]:
-    """Metadata, heading tree and references in one call (T2.1, T2.6)."""
+    """Metadata, heading tree, asset index and references in one call (T2.6).
+
+    The reader opens this before it renders a page, so it carries no block
+    text: a 541-page book has 10 748 blocks, and shipping them all would make
+    the first paint depend on a payload the reader does not need. Blocks are
+    fetched per page (`/pages/{n}/blocks`) as the reader scrolls to them.
+
+    Assets are listed by `kind` so the structure panel can show figures,
+    tables and formulas without a second round trip; the image itself is still
+    fetched per asset from `/assets/{asset_id}`.
+    """
     doc = await _load(session, doc_id)
-    blocks = await session.scalars(
-        select(BlockRow).where(BlockRow.doc_id == doc_id).order_by(BlockRow.reading_order)
+    # The outline is the section tracker's, not "every block typed heading":
+    # the book has 1 014 heading-typed blocks but only 169 section starts, and
+    # a tree of the former repeats one section id hundreds of times (T2.6).
+    # `section_summaries` holds exactly the sections that started a section.
+    sections = await session.scalars(
+        select(SectionSummaryRow)
+        .where(SectionSummaryRow.doc_id == doc_id)
+        .order_by(SectionSummaryRow.page, SectionSummaryRow.section_id)
     )
+    section_rows = list(sections)
+    # The outline jumps to the heading block itself, not the first body block
+    # after it, so the reader lands on the title it clicked. Ordered by reading
+    # order and kept first-wins: a section id can name several blocks, and only
+    # the heading that opened it is the jump target.
+    heading_rows = await session.execute(
+        select(BlockRow.section_id, BlockRow.id)
+        .where(BlockRow.doc_id == doc_id, BlockRow.type == "heading")
+        .order_by(BlockRow.page, BlockRow.reading_order)
+    )
+    heading_of: dict[str, str] = {}
+    for section_id, block_id in heading_rows:
+        if section_id and section_id not in heading_of:
+            heading_of[section_id] = block_id
     outline = [
         {
-            "id": block.section_id,
-            "level": _heading_level(block),
-            "title": block.text.strip()[:200],
-            "page": block.page,
-            "block_id": block.id,
+            "id": section.section_id,
+            "level": section.level or _section_level(section.title),
+            "title": section.title[:200],
+            "page": section.page,
+            "block_id": heading_of.get(section.section_id, _first_block(section.block_ids)),
         }
-        for block in blocks
-        if block.type == "heading"
+        for section in section_rows
     ]
-    references = await session.scalars(
-        select(ReferenceRow).where(ReferenceRow.doc_id == doc_id).order_by(ReferenceRow.index)
+    references = list(
+        await session.scalars(
+            select(ReferenceRow).where(ReferenceRow.doc_id == doc_id).order_by(ReferenceRow.index)
+        )
     )
+    ref_pages = await _pages_of_blocks(session, doc_id, {row.block_id for row in references})
+    assets = await session.scalars(
+        select(AssetRow).where(AssetRow.doc_id == doc_id).order_by(AssetRow.page, AssetRow.id)
+    )
+    stored = doc.meta or {}
     return {
         "meta": {
             "title": doc.title,
-            "authors": [],
-            "abstract": None,
+            "authors": stored.get("authors", []),
+            "abstract": stored.get("abstract"),
             "arxiv_id": doc.arxiv_id,
             "version": doc.version,
-            "year": None,
+            "year": stored.get("year"),
+            "venue": stored.get("venue"),
         },
         "outline": outline,
-        "references": [_reference_payload(row) for row in references],
+        "assets": [_asset_payload(row) for row in assets],
+        "references": [_reference_payload(row, ref_pages.get(row.block_id)) for row in references],
     }
 
 
-def _heading_level(block: BlockRow) -> int:
-    """Recover the outline level from the section title's numbering."""
-    match = re.match(r"^(\d+(?:\.\d+)*)", block.text.strip())
+def _asset_payload(row: AssetRow) -> dict[str, Any]:
+    return {
+        "id": row.id.split(":", 1)[-1],
+        "kind": row.kind,
+        "page": row.page,
+        "bbox": list(row.bbox or []),
+        "path": f"/api/v1/documents/{row.doc_id}/assets/{row.id.split(':', 1)[-1]}",
+        "html": row.html,
+    }
+
+
+def _section_level(title: str) -> int:
+    """The heading's depth, from its numbering ("2.3.1" is level 3)."""
+    match = re.match(r"^(\d+(?:\.\d+)*)", title.strip())
     if match is None:
         return 1
     return min(3, match.group(1).count(".") + 1)
 
 
-def _reference_payload(row: ReferenceRow) -> dict[str, Any]:
+def _first_block(block_ids: list[str] | None) -> str:
+    """The block a section starts at, which is where the outline jumps to."""
+    return block_ids[0] if block_ids else ""
+
+
+def _heading_level(block: BlockRow) -> int:
+    """Recover the outline level from the section title's numbering."""
+    return _section_level(block.text)
+
+
+def _reference_payload(row: ReferenceRow, page: int | None = None) -> dict[str, Any]:
     return {
         "id": row.id.split(":", 1)[-1],
         "index": row.index,
@@ -400,6 +509,7 @@ def _reference_payload(row: ReferenceRow) -> dict[str, Any]:
         "doi": row.doi,
         "arxiv_id": row.arxiv_id,
         "block_id": row.block_id,
+        "page": page if page is not None else _page_of_block(row.block_id),
         "bbox": list(row.bbox or []),
     }
 
@@ -415,17 +525,53 @@ async def get_citations(doc_id: str, session: SessionDep) -> list[dict[str, Any]
     rows = await session.scalars(
         select(CitationRow).where(CitationRow.doc_id == doc_id).order_by(CitationRow.id)
     )
+    citations = list(rows)
+    pages = await _pages_of_blocks(session, doc_id, {row.block_id for row in citations})
     return [
         {
             "id": row.id.split(":", 1)[-1],
             "marker": row.marker,
             "ref_ids": [ref.split(":", 1)[-1] for ref in (row.ref_ids or [])],
             "block_id": row.block_id,
+            "page": pages.get(row.block_id) or _page_of_block(row.block_id),
             "bbox": list(row.bbox or []),
             "method": row.method,
         }
-        for row in rows
+        for row in citations
     ]
+
+
+def _page_of_block(block_id: str) -> int | None:
+    """The page a block id belongs to (`b12_3` → 12), or None.
+
+    Only a fallback: the page is a column on the block row, and documents
+    parsed before the page-scoped id scheme carry ids such as `b202` that
+    would read as page 202 of a 75-page paper. `_pages_of_blocks` asks the
+    database; this is for rows whose block is gone.
+    """
+    if not block_id.startswith("b"):
+        return None
+    head, _, rest = block_id[1:].partition("_")
+    if not head.isdigit() or not rest:
+        return None
+    return int(head)
+
+
+async def _pages_of_blocks(session: AsyncSession, doc_id: str, block_ids: set[str]) -> dict[str, int]:
+    """The page each block sits on, as stored (T2.6).
+
+    The reader draws a marker's hit box on the page the marker sits on, so a
+    wrong page puts the box on a page it does not belong to — or, for a paper
+    shorter than the id's number, nowhere at all.
+    """
+    if not block_ids:
+        return {}
+    rows = await session.execute(
+        select(BlockRow.id, BlockRow.page).where(
+            BlockRow.doc_id == doc_id, BlockRow.id.in_(block_ids)
+        )
+    )
+    return {block_id: page for block_id, page in rows}
 
 
 @router.get("/documents/{doc_id}/references")

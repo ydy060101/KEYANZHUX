@@ -1,109 +1,239 @@
-import { ChevronRight, FileText, Image, Search, ZoomIn, ZoomOut } from "lucide-react";
-import { useMemo, useState } from "react";
+import { BookOpen, FileText, Image } from "lucide-react";
+import type { PDFDocumentProxy } from "pdfjs-dist";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
 
-import { EmptyState } from "@/design/States";
+import { EmptyState, ErrorState, Skeleton } from "@/design/States";
 import { cn } from "@/lib/cn";
-import { mockBlocks, mockOutline, mockReferences, type OutlineItem } from "@/mocks/data";
+import { asReference, fileUrl, useCitations, useReaderDocument, useStructure, type OutlineItem } from "./api";
+import { CitationCard } from "./CitationCard";
+import { CitationOverlay } from "./CitationOverlay";
+import { OutlinePanel } from "./OutlinePanel";
+import { PageView, type PageSize } from "./PageView";
+import { loadPdf, pageSize as measurePage } from "./pdf";
+import { useReader, clampZoom } from "./readerStore";
+import { Thumbnails, Toolbar } from "./ReaderToolbar";
+import { SelectionToolbar } from "./SelectionToolbar";
+import { StructurePanel } from "./StructurePanel";
+import { HIGHLIGHT_MS, useCitationLinks } from "./useCitationLinks";
 
-function OutlineTree({
-  items,
-  activeId,
-  onPick,
-}: {
-  items: OutlineItem[];
-  activeId: string;
-  onPick: (item: OutlineItem) => void;
-}) {
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-  const visible = useMemo(() => {
-    const out: OutlineItem[] = [];
-    let skipLevel: number | null = null;
-    for (const item of items) {
-      if (skipLevel !== null) {
-        if (item.level > skipLevel) continue;
-        skipLevel = null;
-      }
-      out.push(item);
-      if (collapsed.has(item.id)) skipLevel = item.level;
-    }
-    return out;
-  }, [items, collapsed]);
-
-  return (
-    <ul className="flex flex-col">
-      {visible.map((item) => {
-        const hasChildren = items.some((other) => other.level > item.level && other.id !== item.id);
-        return (
-          <li key={item.id}>
-            <div
-              className={cn(
-                "group flex items-center rounded-control pr-2 text-[var(--text-sm)]",
-                activeId === item.id ? "bg-surface-2 text-primary" : "text-ink-2 hover:bg-surface-2",
-              )}
-              style={{ paddingLeft: `${(item.level - 1) * 12 + 4}px` }}
-            >
-              {hasChildren ? (
-                <button
-                  type="button"
-                  aria-label={collapsed.has(item.id) ? "展开" : "折叠"}
-                  onClick={() => {
-                    setCollapsed((prev) => {
-                      const next = new Set(prev);
-                      if (next.has(item.id)) next.delete(item.id);
-                      else next.add(item.id);
-                      return next;
-                    });
-                  }}
-                  className="flex size-5 shrink-0 items-center justify-center"
-                >
-                  <ChevronRight
-                    className={cn("size-3.5 transition-transform", !collapsed.has(item.id) && "rotate-90")}
-                    aria-hidden
-                  />
-                </button>
-              ) : (
-                <span className="size-5 shrink-0" />
-              )}
-              <button
-                type="button"
-                onClick={() => {
-                  onPick(item);
-                }}
-                className="flex min-w-0 flex-1 items-center gap-2 py-1.5 text-left"
-              >
-                <span className="truncate">{item.title}</span>
-                <span className="ml-auto shrink-0 text-[var(--text-xs)] text-ink-2">{item.page}</span>
-              </button>
-            </div>
-          </li>
-        );
-      })}
-    </ul>
-  );
-}
+/** How many pages either side of the viewport keep a rendered bitmap. */
+const WINDOW = 2;
+/** The middle rail's horizontal padding (`px-6`), which the page must not fill. */
+const FIT_PADDING = 48;
 
 export function ReaderPage() {
-  const [tab, setTab] = useState<"toc" | "thumbs">("toc");
+  const { docId = "" } = useParams();
+  const navigate = useNavigate();
+  const documentQuery = useReaderDocument(docId);
+  const structureQuery = useStructure(docId);
+  const citationsQuery = useCitations(docId);
+
+  const page = useReader((s) => s.page);
+  const zoom = useReader((s) => s.zoom);
+  const setZoom = useReader((s) => s.setZoom);
+  const setPage = useReader((s) => s.setPage);
+  const jump = useReader((s) => s.jump);
+  const setActiveSection = useReader((s) => s.setActiveSection);
+  const activeSection = useReader((s) => s.activeSectionId);
+  const consumePending = useReader((s) => s.consumePending);
+  const flashRefId = useReader((s) => s.flashRefId);
+
+  const [doc, setDoc] = useState<PDFDocumentProxy | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [sizes, setSizes] = useState<Record<number, PageSize>>({});
+  const [visible, setVisible] = useState<Set<number>>(() => new Set([1, 2, 3]));
+  const [highlight, setHighlight] = useState<{ page: number; bbox: [number, number, number, number] } | null>(null);
+  const [leftTab, setLeftTab] = useState<"toc" | "thumbs">("toc");
   const [rightTab, setRightTab] = useState<"structure" | "qa" | "translate">("structure");
-  const [activeSection, setActiveSection] = useState("s3");
-  const [zoom, setZoom] = useState(100);
-  const [page, setPage] = useState(3);
+
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const nodes = useRef(new Map<number, HTMLDivElement>());
+  const pendingScroll = useRef<number | null>(null);
+
+  const pageCount = documentQuery.data?.page_count ?? 0;
+
+  // ---- load the PDF -----------------------------------------------------
+  useEffect(() => {
+    if (!docId) return;
+    // A ref, not a closure variable: TypeScript narrows a value the cleanup
+    // reassigns and then flags the guard as dead code, and the guard is what
+    // stops a slow load from writing into a page that is gone.
+    const cancelled = { current: false };
+    const isCancelled = () => cancelled.current;
+    setDoc(null);
+    setLoadError(null);
+    void loadPdf(docId)
+      .then(async (loaded) => {
+        if (isCancelled()) return;
+        setDoc(loaded);
+        // The page box must be right before the first paint, or the scroll
+        // position the reader restores lands on the wrong page.
+        const first = await measurePage(loaded, 1);
+        if (isCancelled()) return;
+        setSizes({ 1: first });
+      })
+      .catch((error: unknown) => {
+        if (isCancelled()) return;
+        setLoadError(error instanceof Error ? error.message : "PDF 加载失败");
+      });
+    return () => {
+      cancelled.current = true;
+    };
+  }, [docId]);
+
+  const register = useCallback((pageNumber: number, node: HTMLDivElement | null) => {
+    if (node) nodes.current.set(pageNumber, node);
+    else nodes.current.delete(pageNumber);
+  }, []);
+
+  // 适应宽度 (02 §4.2): the page is as wide as the middle rail allows. The
+  // scale is computed from the page's own width in PDF units, so a document
+  // set on A4 and one set on Letter both fill the rail exactly. The rail's
+  // width is measured rather than assumed, because it changes with the
+  // window and with the two side rails.
+  const fitWidth = useReader((s) => s.fitWidth);
+  const toggleFitWidth = useReader((s) => s.toggleFitWidth);
+  useEffect(() => {
+    const host = scrollRef.current;
+    if (!host || !fitWidth) return;
+    const first = sizes[1];
+    if (!first) return;
+    const measure = () => {
+      const available = host.clientWidth - FIT_PADDING;
+      if (available <= 0) return;
+      // `setZoom` would clear fitWidth, so the store's setter is not used here.
+      useReader.setState({ zoom: clampZoom(Math.floor((available / first.width) * 100)) });
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(host);
+    return () => {
+      observer.disconnect();
+    };
+  }, [fitWidth, sizes]);
+
+  const onSize = useCallback((pageNumber: number, size: PageSize) => {
+    setSizes((prev) => (prev[pageNumber] ? prev : { ...prev, [pageNumber]: size }));
+  }, []);
+
+  const onActive = useCallback(
+    (pageNumber: number) => {
+      setPage(pageNumber);
+      setVisible((prev) => {
+        const next = new Set<number>();
+        for (let n = Math.max(1, pageNumber - WINDOW); n <= Math.min(pageCount || pageNumber + WINDOW, pageNumber + WINDOW); n += 1) {
+          next.add(n);
+        }
+        if (next.size === prev.size && [...next].every((n) => prev.has(n))) return prev;
+        return next;
+      });
+      const heading = structureQuery.data?.outline.filter((item) => item.page <= pageNumber).at(-1);
+      setActiveSection(heading?.id ?? null);
+    },
+    [pageCount, setActiveSection, setPage, structureQuery.data?.outline],
+  );
+
+  // ---- scrolling to a target --------------------------------------------
+  const scrollToPage = useCallback((target: number) => {
+    const node = nodes.current.get(target);
+    if (node) {
+      node.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
+    pendingScroll.current = target;
+    setPage(target);
+  }, [setPage]);
+
+  useEffect(() => {
+    if (!pendingScroll.current) return;
+    const node = nodes.current.get(pendingScroll.current);
+    if (!node) return;
+    node.scrollIntoView({ block: "start" });
+    pendingScroll.current = null;
+  }, [sizes]);
+
+  // A jump requested by the outline, the structure panel or an anchor.
+  useEffect(() => {
+    const target = consumePending();
+    if (!target) return;
+    scrollToPage(target.page);
+    if (target.highlight && target.blockId) {
+      const block = citationsQuery.data?.find((c) => c.block_id === target.blockId);
+      if (block?.bbox && block.bbox.length === 4) {
+        setHighlight({ page: target.page, bbox: block.bbox as [number, number, number, number] });
+        window.setTimeout(() => {
+          setHighlight(null);
+        }, HIGHLIGHT_MS);
+      }
+    }
+  }, [consumePending, scrollToPage, citationsQuery.data, page]);
+
+  // ---- citation interaction ---------------------------------------------
+  const openStructure = useCallback(() => {
+    setRightTab("structure");
+  }, []);
+  const references = useMemo(
+    () => (structureQuery.data?.references ?? []).map(asReference),
+    [structureQuery.data?.references],
+  );
+  const links = useCitationLinks(references, citationsQuery.data ?? [], openStructure);
+
+  // ---- render ------------------------------------------------------------
+  if (!docId) {
+    return (
+      <EmptyState
+        title="还没有打开文献"
+        description="从资料库选择一篇文献，或先上传一份 PDF。"
+        icon={<BookOpen className="size-6" aria-hidden />}
+        action={
+          <button
+            type="button"
+            onClick={() => {
+              navigate("/library");
+            }}
+            className="rounded-control bg-primary px-4 py-2 text-[var(--text-sm)] font-medium text-white"
+          >
+            去资料库
+          </button>
+        }
+      />
+    );
+  }
+
+  if (documentQuery.isPending) {
+    return <ReaderSkeleton />;
+  }
+
+  if (documentQuery.isError) {
+    return (
+      <ErrorState
+        message="无法打开这篇文献"
+        detail={documentQuery.error.message}
+        onRetry={() => {
+          void documentQuery.refetch();
+        }}
+      />
+    );
+  }
+
+  const total = pageCount || 1;
 
   return (
     <div className="flex h-full min-h-0">
-      <aside className="flex w-[240px] shrink-0 flex-col border-r border-border bg-surface">
+      <aside className="flex w-[248px] shrink-0 flex-col border-r border-border bg-surface">
         <div className="flex border-b border-border" role="tablist" aria-label="左栏">
           {(["toc", "thumbs"] as const).map((key) => (
             <button
               key={key}
               role="tab"
-              aria-selected={tab === key}
+              aria-selected={leftTab === key}
               onClick={() => {
-                setTab(key);
+                setLeftTab(key);
               }}
               className={cn(
                 "flex flex-1 items-center justify-center gap-1.5 py-2 text-[var(--text-sm)]",
-                tab === key ? "border-b-2 border-primary font-medium text-primary" : "text-ink-2",
+                leftTab === key ? "border-b-2 border-primary font-medium text-primary" : "text-ink-2",
               )}
             >
               {key === "toc" ? <FileText className="size-3.5" aria-hidden /> : <Image className="size-3.5" aria-hidden />}
@@ -111,120 +241,102 @@ export function ReaderPage() {
             </button>
           ))}
         </div>
-        <div className="app-scroll flex-1 p-2">
-          {tab === "toc" ? (
-            <OutlineTree
-              items={mockOutline}
+        <div className="min-h-0 flex-1">
+          {leftTab === "toc" ? (
+            <OutlinePanel
+              items={structureQuery.data?.outline ?? []}
               activeId={activeSection}
-              onPick={(item) => {
+              onPick={(item: OutlineItem) => {
                 setActiveSection(item.id);
-                setPage(item.page);
+                jump({ page: item.page, blockId: item.block_id, highlight: true });
               }}
             />
           ) : (
-            <div className="grid grid-cols-2 gap-2">
-              {Array.from({ length: 15 }, (_, i) => i + 1).map((n) => (
-                <button
-                  key={n}
-                  type="button"
-                  onClick={() => {
-                    setPage(n);
-                  }}
-                  className={cn(
-                    "flex aspect-[3/4] items-center justify-center rounded border text-[var(--text-xs)]",
-                    page === n ? "border-primary text-primary" : "border-border text-ink-2 hover:border-primary",
-                  )}
-                >
-                  {n}
-                </button>
-              ))}
-            </div>
+            <Thumbnails total={total} current={page} onPick={scrollToPage} />
           )}
         </div>
       </aside>
 
       <section className="flex min-w-0 flex-1 flex-col bg-surface-2">
-        <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border bg-surface px-3">
-          <button
-            type="button"
-            aria-label="缩小"
-            onClick={() => {
-              setZoom((z) => Math.max(50, z - 10));
-            }}
-            className="rounded p-1.5 text-ink-2 hover:bg-surface-2 hover:text-ink"
+        <Toolbar
+          page={page}
+          total={total}
+          zoom={zoom}
+          fitWidth={fitWidth}
+          onZoom={(next) => {
+            setZoom(next);
+          }}
+          onFitWidth={() => {
+            toggleFitWidth();
+          }}
+          onPage={(next) => {
+            scrollToPage(Math.min(total, Math.max(1, next)));
+          }}
+          fileHref={fileUrl(docId)}
+        />
+
+        {loadError ? (
+          <ErrorState message="PDF 渲染失败" detail={loadError} />
+        ) : (
+          <div ref={scrollRef} data-reader-scroll className="app-scroll flex-1 px-6 py-6">
+            {doc ? (
+              <div className="mx-auto flex w-fit flex-col gap-4">
+                {Array.from({ length: total }, (_, index) => index + 1).map((pageNumber) => (
+                  <PageView
+                    key={pageNumber}
+                    doc={doc}
+                    pageNumber={pageNumber}
+                    size={sizes[pageNumber] ?? { width: 612, height: 792 }}
+                    active={visible.has(pageNumber)}
+                    zoom={zoom}
+                    highlight={highlight?.page === pageNumber ? highlight.bbox : null}
+                    onSize={onSize}
+                    onActive={onActive}
+                    register={register}
+                    overlay={
+                      <CitationOverlay
+                        citations={links.citationsByPage.get(pageNumber) ?? []}
+                        zoom={zoom}
+                        onHover={(x, y, marker, citation) => {
+                          links.openCard(x, y, marker, citation, pageNumber);
+                        }}
+                        onLeave={links.scheduleHoverClose}
+                        onOpen={(citation) => {
+                          const reference = links.referenceById.get(citation.ref_ids?.[0] ?? "");
+                          if (reference) links.openReference(reference);
+                          links.setHover(null);
+                        }}
+                      />
+                    }
+                  />
+                ))}
+              </div>
+            ) : (
+              <PageSkeleton />
+            )}
+          </div>
+        )}
+
+        {links.hover && (
+          <div
+            className="fixed z-20 -translate-x-1/2"
+            style={{ left: links.hover.x, top: links.hover.y }}
+            onMouseEnter={links.cancelHoverClose}
+            onMouseLeave={links.scheduleHoverClose}
           >
-            <ZoomOut className="size-4" aria-hidden />
-          </button>
-          <span className="w-12 text-center text-[var(--text-sm)] text-ink-2">{zoom}%</span>
-          <button
-            type="button"
-            aria-label="放大"
-            onClick={() => {
-              setZoom((z) => Math.min(300, z + 10));
-            }}
-            className="rounded p-1.5 text-ink-2 hover:bg-surface-2 hover:text-ink"
-          >
-            <ZoomIn className="size-4" aria-hidden />
-          </button>
-          <span className="mx-1 h-4 w-px bg-border" />
-          <input
-            type="number"
-            value={page}
-            min={1}
-            max={15}
-            aria-label="跳转页码"
-            onChange={(event) => {
-              setPage(Math.min(15, Math.max(1, Number(event.target.value) || 1)));
-            }}
-            className="h-7 w-14 rounded-control border border-border bg-surface px-2 text-center text-[var(--text-sm)]"
-          />
-          <span className="text-[var(--text-sm)] text-ink-2">/ 15</span>
-          <div className="ml-auto flex items-center gap-1.5 rounded-control border border-border px-2 py-1">
-            <Search className="size-3.5 text-ink-2" aria-hidden />
-            <input
-              placeholder="页内搜索"
-              aria-label="页内搜索"
-              className="w-32 bg-transparent text-[var(--text-sm)] outline-none placeholder:text-ink-2"
+            <CitationCard
+              marker={links.hover.marker}
+              references={links.hoverRefs}
+              onOpen={(reference) => {
+                void navigate(`/discover?q=${encodeURIComponent(reference.title ?? reference.raw)}`);
+              }}
+              onJump={links.openReference}
             />
           </div>
-        </div>
-
-        <div className="app-scroll flex-1 p-6">
-          <div
-            className="mx-auto max-w-[720px] rounded-card bg-surface p-10 shadow-sm"
-            style={{ transform: `scale(${zoom / 100})`, transformOrigin: "top center" }}
-          >
-            <h2 className="text-[var(--text-lg)] font-semibold leading-snug">
-              Attention Is All You Need
-            </h2>
-            <p className="mt-1 text-[var(--text-sm)] text-ink-2">
-              Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez,
-              Łukasz Kaiser, Illia Polosukhin
-            </p>
-            <div className="mt-6 space-y-4">
-              {mockBlocks
-                .filter((block) => block.type === "paragraph")
-                .map((block) => (
-                  <p key={block.id} className="font-read text-[15px] leading-[1.75] text-ink">
-                    {block.text}
-                  </p>
-                ))}
-              {mockBlocks
-                .filter((block) => block.type === "formula")
-                .map((block) => (
-                  <div
-                    key={block.id}
-                    className="rounded-control border border-border bg-surface-2 px-4 py-3 font-mono text-[var(--text-sm)] text-ink"
-                  >
-                    {block.latex}
-                  </div>
-                ))}
-            </div>
-          </div>
-        </div>
+        )}
       </section>
 
-      <aside className="flex w-[320px] shrink-0 flex-col border-l border-border bg-surface">
+      <aside className="flex w-[340px] shrink-0 flex-col border-l border-border bg-surface">
         <div className="flex border-b border-border" role="tablist" aria-label="右栏">
           {(
             [
@@ -249,39 +361,66 @@ export function ReaderPage() {
             </button>
           ))}
         </div>
-        <div className="app-scroll flex-1 p-4">
+        <div className="min-h-0 flex-1">
           {rightTab === "structure" && (
-            <div className="space-y-4">
-              <section>
-                <h3 className="mb-2 text-[var(--text-sm)] font-medium text-ink">参考文献</h3>
-                <ul className="space-y-2">
-                  {mockReferences.map((ref) => (
-                    <li key={ref.id} className="rounded-control border border-border p-2">
-                      <p className="text-[var(--text-xs)] text-ink-2">[{ref.index}]</p>
-                      <p className="line-clamp-2 text-[var(--text-sm)] text-ink">{ref.title ?? ref.raw}</p>
-                      <div className="mt-1 flex items-center gap-2">
-                        <div className="h-1 flex-1 overflow-hidden rounded-full bg-surface-2">
-                          <div
-                            className="h-full rounded-full bg-accent"
-                            style={{ width: `${String(ref.worth_score ?? 0)}%` }}
-                          />
-                        </div>
-                        <span className="text-[var(--text-xs)] text-ink-2">{ref.worth_score ?? 0}</span>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            </div>
+            <StructurePanel
+              meta={structureQuery.data?.meta}
+              assets={structureQuery.data?.assets ?? []}
+              references={references}
+              flashRefId={flashRefId}
+              lastCitation={links.lastCitation}
+              onJumpPage={(target) => {
+                scrollToPage(target);
+              }}
+              onJumpReference={links.openReference}
+              onBackToCitation={links.backToCitation}
+            />
           )}
           {rightTab === "qa" && (
-            <EmptyState title="就这篇文献提问" description="回答中的每条结论都会附原文锚点。" />
+            <EmptyState title="就这篇文献提问" description="问答台将在 T3.5 接入，回答中的每条结论都会附原文锚点。" />
           )}
           {rightTab === "translate" && (
-            <EmptyState title="尚未翻译" description="整篇翻译后可在此下载 Markdown 或 HTML。" />
+            <EmptyState title="尚未翻译" description="整篇翻译将在 T4.2 接入，完成后可在此下载 Markdown 或 HTML。" />
           )}
         </div>
       </aside>
+
+      <SelectionToolbar
+        onTranslate={() => {
+          setRightTab("translate");
+        }}
+        onAsk={() => {
+          setRightTab("qa");
+        }}
+        onHighlight={() => {
+          /* highlighting a selection is T4.1; the toolbar is shared with it */
+        }}
+      />
     </div>
   );
+}
+
+function ReaderSkeleton() {
+  return (
+    <div className="flex h-full min-h-0">
+      <div className="w-[248px] shrink-0 border-r border-border p-3">
+        <Skeleton className="h-6 w-full" />
+        <div className="mt-3 space-y-2">
+          {Array.from({ length: 8 }, (_, i) => (
+            <Skeleton key={i} className="h-4 w-full" />
+          ))}
+        </div>
+      </div>
+      <div className="flex flex-1 items-center justify-center">
+        <PageSkeleton />
+      </div>
+      <div className="w-[340px] shrink-0 border-l border-border p-3">
+        <Skeleton className="h-6 w-full" />
+      </div>
+    </div>
+  );
+}
+
+function PageSkeleton() {
+  return <Skeleton className="h-[70vh] w-[520px] max-w-full" />;
 }
