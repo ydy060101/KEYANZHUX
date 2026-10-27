@@ -115,21 +115,31 @@ async def session() -> AsyncIterator[Any]:
 
 
 @pytest.fixture(scope="module")
-def paper_chunks() -> list[Any]:
-    """The Attention-v1 fixture, parsed and chunked once per test module.
+def paper_parse() -> Any:
+    """The Attention-v1 fixture, parsed once per test module.
 
-    Used by both retrieval test modules; parsing a 15-page paper per test would
-    dominate the suite's runtime for no benefit, and the chunks are identical
-    every time (H06).
+    Shared by `paper_chunks` and by the QA tests, which need the block rows
+    (page, bbox) that chunks alone cannot provide. Parsing is the expensive
+    part; a module parses the paper once (H06: identical every time).
     """
     from pathlib import Path
 
     from app.ingest.parser import parse_pdf
-    from app.rag.chunk import Chunker
 
     path = Path(__file__).resolve().parent.parent / "fixtures" / "pdf" / "1706.03762v1.pdf"
     if not path.is_file():
         pytest.skip("1706.03762v1.pdf is not staged")
-    result = parse_pdf(path, "doc-transformer")
+    return parse_pdf(path, "doc-transformer")
+
+
+@pytest.fixture(scope="module")
+def paper_chunks(paper_parse: Any) -> list[Any]:
+    """The fixture paper's chunks.
+
+    Used by the retrieval and QA test modules; parsing a 15-page paper per test
+    would dominate the suite's runtime for no benefit.
+    """
+    from app.rag.chunk import Chunker
+
     chunker = Chunker()
-    return chunker.feed(result.model.blocks) + chunker.flush()
+    return chunker.feed(paper_parse.model.blocks) + chunker.flush()

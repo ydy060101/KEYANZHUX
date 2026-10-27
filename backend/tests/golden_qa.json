@@ -1,0 +1,209 @@
+{
+  "version": 1,
+  "documents": {
+    "transformer": {
+      "fixture": "1706.03762v1.pdf",
+      "title": "Attention Is All You Need",
+      "arxiv_id": "1706.03762v1"
+    }
+  },
+  "entries": [
+    {
+      "id": "q01",
+      "scope": "single",
+      "doc": "transformer",
+      "question": "How many warmup steps does the learning rate schedule use?",
+      "expected_points": ["4000"],
+      "expected_pages": [7]
+    },
+    {
+      "id": "q02",
+      "scope": "single",
+      "doc": "transformer",
+      "question": "What optimizer and beta values were used for training?",
+      "expected_points": ["0.98"],
+      "expected_pages": [7]
+    },
+    {
+      "id": "q03",
+      "scope": "single",
+      "doc": "transformer",
+      "question": "How many attention heads does the base model use?",
+      "expected_points": ["8"],
+      "expected_pages": [4]
+    },
+    {
+      "id": "q04",
+      "scope": "single",
+      "doc": "transformer",
+      "question": "What dropout rate was used for the base model?",
+      "expected_points": ["0.1"],
+      "expected_pages": [7]
+    },
+    {
+      "id": "q05",
+      "scope": "single",
+      "doc": "transformer",
+      "question": "How many identical layers are in the encoder?",
+      "expected_points": ["6"],
+      "expected_pages": [2]
+    },
+    {
+      "id": "q06",
+      "scope": "single",
+      "doc": "transformer",
+      "question": "How is positional information injected into the model?",
+      "expected_points": ["positional encoding"],
+      "expected_pages": [5, 7]
+    },
+    {
+      "id": "q07",
+      "scope": "single",
+      "doc": "transformer",
+      "question": "What BLEU score did the big model reach on English-to-French?",
+      "expected_points": ["41.0"],
+      "expected_pages": [8]
+    },
+    {
+      "id": "q08",
+      "scope": "single",
+      "doc": "transformer",
+      "question": "What BLEU score did the big model reach on English-to-German?",
+      "expected_points": ["28.4"],
+      "expected_pages": [7]
+    },
+    {
+      "id": "q09",
+      "scope": "single",
+      "doc": "transformer",
+      "question": "What hardware was used to train the models?",
+      "expected_points": ["P100"],
+      "expected_pages": [7]
+    },
+    {
+      "id": "q10",
+      "scope": "single",
+      "doc": "transformer",
+      "question": "How long did the base models take to train?",
+      "expected_points": ["12 hours"],
+      "expected_pages": [7]
+    },
+    {
+      "id": "q11",
+      "scope": "single",
+      "doc": "transformer",
+      "question": "How long did the big models take to train?",
+      "expected_points": ["3.5 days"],
+      "expected_pages": [7]
+    },
+    {
+      "id": "q12",
+      "scope": "single",
+      "doc": "transformer",
+      "question": "What value of label smoothing was used during training?",
+      "expected_points": ["0.1"],
+      "expected_pages": [7]
+    },
+    {
+      "id": "q13",
+      "scope": "single",
+      "doc": "transformer",
+      "question": "What beam size was used during inference?",
+      "expected_points": ["4"],
+      "expected_pages": [8]
+    },
+    {
+      "id": "q14",
+      "scope": "single",
+      "doc": "transformer",
+      "question": "What length penalty was used for beam search?",
+      "expected_points": ["0.6"],
+      "expected_pages": [8]
+    },
+    {
+      "id": "q15",
+      "scope": "single",
+      "doc": "transformer",
+      "question": "What is the inner-layer dimension of the feed-forward network?",
+      "expected_points": ["2048"],
+      "expected_pages": [5]
+    },
+    {
+      "id": "q16",
+      "scope": "single",
+      "doc": "transformer",
+      "question": "How many sentence pairs are in the WMT 2014 English-German training set?",
+      "expected_points": ["4.5 million"],
+      "expected_pages": [6]
+    },
+    {
+      "id": "q17",
+      "scope": "single",
+      "doc": "transformer",
+      "question": "How many sentences are in the WMT 2014 English-French training set?",
+      "expected_points": ["36M"],
+      "expected_pages": [7]
+    },
+    {
+      "id": "q18",
+      "scope": "single",
+      "doc": "transformer",
+      "question": "How many training steps did the base models take?",
+      "expected_points": ["100,000"],
+      "expected_pages": [7]
+    },
+    {
+      "id": "q19",
+      "scope": "single",
+      "doc": "transformer",
+      "question": "Which optimizer was used to train the models?",
+      "expected_points": ["Adam"],
+      "expected_pages": [7]
+    },
+    {
+      "id": "q20",
+      "scope": "single",
+      "doc": "transformer",
+      "question": "What activation function is used in the feed-forward network?",
+      "expected_points": ["ReLU"],
+      "expected_pages": [5]
+    }
+  ],
+  "unanswerable": [
+    {
+      "id": "u01",
+      "scope": "single",
+      "doc": "transformer",
+      "question": "What is the capital of France?",
+      "reason": "general knowledge, nothing to do with the paper"
+    },
+    {
+      "id": "u02",
+      "scope": "single",
+      "doc": "transformer",
+      "question": "How many parameters does GPT-4 have?",
+      "reason": "model not discussed in the paper"
+    },
+    {
+      "id": "u03",
+      "scope": "single",
+      "doc": "transformer",
+      "question": "Who won the 2018 FIFA World Cup?",
+      "reason": "unrelated event"
+    },
+    {
+      "id": "u04",
+      "scope": "single",
+      "doc": "transformer",
+      "question": "What is the boiling point of water at sea level?",
+      "reason": "general knowledge, nothing to do with the paper"
+    },
+    {
+      "id": "u05",
+      "scope": "single",
+      "doc": "transformer",
+      "question": "How many TPUs did BERT use for pretraining?",
+      "reason": "BERT is not in scope; the paper's hardware passage must not be reused as an answer"
+    }
+  ]
+}
