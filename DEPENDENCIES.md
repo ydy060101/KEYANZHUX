@@ -49,6 +49,7 @@ New dependencies must be recorded here with their purpose and why the existing s
 | ruff | 0.17.2 | Lint and format |
 | mypy | 1.19.1 | Static types (strict) |
 | pre-commit | 4.4.0 | Pre-commit checks |
+| psutil / types-psutil | 7.2.2 / 7.2.2.20260906 | Peak-RSS sampling for the H11 check on the 541-page book (`tools/check_long_book.py`, `tests/test_long_book.py`). Nothing else measures the parse worker's own memory; `resource` is Unix-only and `tracemalloc` counts Python allocations only, missing the MuPDF/OCR native buffers that dominate this pipeline. |
 
 ## Frontend
 

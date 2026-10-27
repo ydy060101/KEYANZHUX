@@ -136,7 +136,7 @@ def page_blocks(page: pdfio.Page, *, scanned: bool) -> list[pdfio.TypedBlock]:
     return reading_order(page)
 
 
-def _block_type(text: str, bbox: tuple[float, float, float, float], page_height: float) -> BlockType:
+def _block_type(text: str) -> BlockType:
     stripped = text.strip()
     if _HEADING_RE.match(stripped) and len(stripped) < 90:
         return "heading"
@@ -163,45 +163,71 @@ def extract_blocks(
     *,
     threshold: int = 30,
 ) -> tuple[list[Block], list[OutlineItem]]:
+    """Every block in the document, with its heading tree.
+
+    Blocks are identified by page (`b12_3`), not by a running counter: a
+    windowed parse (T2.5) resumes from any page, and an id that depends on how
+    many blocks came before it would name a different block after a resume.
+    """
     scanned = {page.index: _is_scanned(page, threshold) for page in pages}
     blocks: list[Block] = []
     sizes: dict[str, float] = {}
-    counter = 0
-    section = "s0"
     total = pdfio.page_count(doc)
     limit = min(page_limit or total, total)
 
     for page_index in range(limit):
         page = pdfio.page(doc, page_index)
-        _, page_height = pdfio.page_size(page)
-        page_is_scan = scanned.get(page_index + 1, False)
-        for raw in page_blocks(page, scanned=page_is_scan):
-            counter += 1
-            block_id = f"b{counter}"
-            kind = _block_type(raw.text, (raw.x0, raw.y0, raw.x1, raw.y1), page_height)
-            if kind == "heading":
-                section = f"s{counter}"
-            sizes[block_id] = raw.size
-            blocks.append(
-                Block(
-                    id=block_id,
-                    type=kind,
-                    page=page_index + 1,
-                    bbox=[raw.x0, raw.y0, raw.x1, raw.y1],
-                    reading_order=counter,
-                    section_id=section,
-                    text=raw.text.strip(),
-                    # A recognised character is a guess; leaving 1.0 would claim
-                    # the same certainty as extracted text (H01).
-                    confidence=0.9 if page_is_scan else 1.0,
-                    bold=raw.bold,
-                )
-            )
+        raw_blocks = page_blocks(page, scanned=scanned.get(page_index + 1, False))
+        typed = to_model_blocks(
+            raw_blocks,
+            page_no=page_index + 1,
+            scanned=scanned.get(page_index + 1, False),
+            start_order=len(blocks) + 1,
+        )
+        for block, raw in zip(typed, raw_blocks, strict=True):
+            sizes[block.id] = raw.size
+        blocks.extend(typed)
 
     # Stage 6 (T2.1): the heading tree replaces the block-level guess above,
     # so sections come from the PDF outline when it has one.
     outline = build_outline(doc, blocks, body_size=_body_size(doc, blocks, scanned), sizes=sizes)
     return blocks, outline
+
+
+def to_model_blocks(
+    raw_blocks: list[pdfio.TypedBlock],
+    *,
+    page_no: int,
+    scanned: bool,
+    start_order: int,
+) -> list[Block]:
+    """One page's extracted blocks as document-model blocks.
+
+    Ids are page-scoped so a window can be parsed, persisted and later resumed
+    without knowing how many blocks preceded it. `reading_order` is passed in
+    because that ordering *is* document-wide and the caller owns it.
+    """
+    blocks: list[Block] = []
+    for index, raw in enumerate(raw_blocks, start=1):
+        block_id = f"b{page_no}_{index}"
+        blocks.append(
+            Block(
+                id=block_id,
+                type=_block_type(raw.text),
+                page=page_no,
+                bbox=[raw.x0, raw.y0, raw.x1, raw.y1],
+                reading_order=start_order + index - 1,
+                # Sections come from the heading tree; until then a block
+                # belongs to the document's opening section.
+                section_id="s0",
+                text=raw.text.strip(),
+                # A recognised character is a guess; leaving 1.0 would claim
+                # the same certainty as extracted text (H01).
+                confidence=0.9 if scanned else 1.0,
+                bold=raw.bold,
+            )
+        )
+    return blocks
 
 
 def _body_size(doc: pdfio.Document, blocks: list[Block] | None = None, scanned: dict[int, bool] | None = None) -> float:

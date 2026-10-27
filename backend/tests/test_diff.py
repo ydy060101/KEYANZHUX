@@ -185,7 +185,7 @@ async def test_endpoint_diff_between_two_real_parses(session: Any, monkeypatch: 
 
     from app.ingest.parser import parse_pdf
     from app.main import create_app
-    from app.workers.parse_task import persist_parse
+    from app.workers.persist import persist_parse
 
     fixtures = FIXTURES
     ids = {}

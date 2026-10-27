@@ -83,6 +83,19 @@ class TypedBlock:
 _BOLD_MARKERS = ("bold", "black", "heavy", "semibold", "demibold", "medi")
 
 
+# Characters that cannot be stored in a PostgreSQL text column, or that mean
+# nothing in extracted prose: NUL (which some embedded fonts produce for an
+# unmapped glyph) and the C0 control range other than tab/newline. A NUL in a
+# block's text makes the whole parse fail at the INSERT, so it is removed where
+# the text is built rather than at every write.
+_UNSTORABLE = str.maketrans({chr(code): None for code in range(0x20) if chr(code) not in "\t\n\r"})
+
+
+def clean_text(text: str) -> str:
+    """Text that can be stored: control characters removed, nothing else."""
+    return text.replace("\x00", "").translate(_UNSTORABLE)
+
+
 def join_lines(lines: list[str]) -> str:
     """A block's text from its lines, undoing the hyphenation a break introduced.
 
@@ -100,7 +113,7 @@ def join_lines(lines: list[str]) -> str:
         # "--" is an em dash set as two hyphens, not a broken word.
         broken = text.endswith("-") and not text.endswith("--")
         text = f"{text[:-1]}{line}" if broken else f"{text} {line}"
-    return text.strip()
+    return clean_text(text).strip()
 
 
 def block_text(block: dict[str, Any]) -> str:

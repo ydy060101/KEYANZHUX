@@ -158,6 +158,28 @@ def from_bookmarks(doc: pdfio.Document) -> list[Heading]:
     ]
 
 
+def merged_bookmarks(doc: pdfio.Document) -> list[Heading]:
+    """The bookmark headings, wrapped titles already joined.
+
+    Public because the windowed parse needs the same headings, with the same
+    ids, before it has any blocks: a section boundary decides which section a
+    window's text belongs to, and it must not depend on having seen the whole
+    document (T2.5).
+    """
+    return _merge_wrapped(from_bookmarks(doc))
+
+
+def title_stem(text: str) -> str:
+    """A heading's title without its section number, lowercased.
+
+    Bookmarks and the printed page disagree about numbering: the book's
+    outline says "Unsupervised learning" and the page says "1.2 Unsupervised
+    learning". Comparing the stems is what lets one find the other.
+    """
+    match = _NUMBERED.match(normalise_title(text))
+    return (match.group(2) if match else text).strip().lower()
+
+
 def _size_of(block: Block, sizes: dict[str, float]) -> float:
     return sizes.get(block.id, 0.0)
 

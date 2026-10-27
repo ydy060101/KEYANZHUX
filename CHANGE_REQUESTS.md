@@ -61,3 +61,21 @@ contract stays unchanged until a human approves it (AGENTS.md §2.3).
   they cannot drift from the data they describe.
 - **Proposal:** Extend `stats` with the four integer counters.
 - **Status:** Applied in T2.3. Awaiting human approval.
+
+## CR-005 — A table for the section-level index
+
+- **Request:** Add a `section_summaries` table: `doc_id`, `section_id`, `title`,
+  `page`, `summary`, `block_ids[]`, with a primary key on `(doc_id, section_id)`.
+- **Reason:** T2.5 requires "章节摘要两级索引" — a section level above the block
+  chunks 01 §9 defines. 01 §4 lists `chunks` with `section_id`, which lets a
+  chunk name its section but gives the section no row of its own: there is
+  nowhere to hold a section's title, page and summary, so the coarse level of
+  the index cannot be stored or queried. 01 §4 calls its table list a "最小集合",
+  so a table is not excluded in principle, but adding one is still a contract
+  change and is recorded here rather than made silently.
+- **Impact:** Additive. No existing table, column, API path or field changes.
+  The summary is extractive (the section's own opening sentences) rather than
+  LLM-generated, so it needs no anchor column and cannot invent content (H02).
+- **Proposal:** Add the table with `(doc_id, section_id)` as its key; write it
+  from the windowed parse as each window's sections close.
+- **Status:** Applied in T2.5. Awaiting human approval.

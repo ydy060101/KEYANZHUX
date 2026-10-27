@@ -47,6 +47,9 @@ dev = [
     "mypy>=1.13,<2",
     "pre-commit>=4,<5",
     "types-requests",
+    # Peak-RSS sampling for the H11 long-book check (T2.5).
+    "psutil>=7,<8",
+    "types-psutil>=7,<8",
 ]
 
 [tool.setuptools.packages.find]
@@ -81,5 +84,12 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-addopts = "-q"
+# `slow` marks the measurements that need the 541-page book (T2.5): they take
+# minutes, so they are excluded from the default run and invoked explicitly
+# with `-m slow`. Excluding them by default keeps `tools.ps1 accept` honest —
+# a suite that takes ten minutes is a suite people stop running.
+addopts = "-q -m 'not slow'"
+markers = [
+    "slow: needs the 541-page fixture and takes minutes (run with -m slow)",
+]
 filterwarnings = ["error::DeprecationWarning:app.*"]

@@ -181,7 +181,11 @@ def _union(
 
 
 def extract_assets(doc: pdfio.Document, blocks: list[Block], doc_id: str) -> list[Asset]:
-    """Crop every figure, table and formula and record where it came from."""
+    """Crop every figure, table and formula and record where they came from.
+
+    Called once per window by the windowed parse (T2.5); every asset id it
+    produces is page-scoped, so two windows can never collide.
+    """
     out_dir = storage.asset_dir(doc_id)
     assets: list[Asset] = []
     captions = find_captions(blocks)
@@ -298,11 +302,17 @@ def _extract_formulas(
     out_dir: Path,
     table_regions: list[tuple[int, list[float]]] | None = None,
 ) -> list[Asset]:
-    """Crop formula-like blocks. The LaTeX comes later (T7); the crop is now."""
+    """Crop formula-like blocks. The LaTeX comes later (T7); the crop is now.
+
+    Formula ids are page-scoped (`eq12_3`), like block ids: a windowed parse
+    (T2.5) calls this once per window, and a running counter would restart at
+    `eq1` in the second window — the same id naming two different formulas,
+    and a re-parsed window colliding with its own earlier rows.
+    """
     assets: list[Asset] = []
     seen: set[tuple[int, str]] = set()
     tables = table_regions or []
-    counter = 0
+    per_page: dict[int, int] = {}
     for block in blocks:
         if not _looks_like_formula(block, tables):
             continue
@@ -310,8 +320,8 @@ def _extract_formulas(
         if key in seen:
             continue
         seen.add(key)
-        counter += 1
-        asset_id = f"eq{counter}"
+        per_page[block.page] = per_page.get(block.page, 0) + 1
+        asset_id = f"eq{block.page}_{per_page[block.page]}"
         page = pdfio.page(doc, block.page - 1)
         bbox = (block.bbox[0], block.bbox[1], block.bbox[2], block.bbox[3])
         path = out_dir / f"{asset_id}.png"

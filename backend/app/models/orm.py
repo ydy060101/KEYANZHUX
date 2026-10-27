@@ -10,6 +10,7 @@ from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    Computed,
     DateTime,
     Float,
     ForeignKey,
@@ -18,7 +19,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, TSVECTOR
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -108,9 +109,35 @@ class Chunk(Base):
     page_end: Mapped[int] = mapped_column(Integer)
     text: Mapped[str] = mapped_column(Text)
     embedding: Mapped[Any | None] = mapped_column(Vector(1024))
-    tsv: Mapped[str | None] = mapped_column(Text)
+    # A generated tsvector rather than a plain text column: the full-text
+    # index must be derived from `text` by PostgreSQL itself, or it can drift
+    # from the text it is supposed to index. `english` is named explicitly
+    # because the two-argument form is immutable, which a generated column
+    # requires, and because a search configuration that changes with a server
+    # setting would make the index silently unreproducible (H06).
+    tsv: Mapped[Any | None] = mapped_column(
+        TSVECTOR, Computed("to_tsvector('english', text)", persisted=True)
+    )
 
     document: Mapped[Document] = relationship(back_populates="chunks")
+
+
+class SectionSummaryRow(Base):
+    """The coarse level of the two-level index (T2.5, CR-005).
+
+    A chunk names its section, but a section has no row of its own to hold a
+    title and a summary — which is exactly what a reader scans in a 541-page
+    book and what a question about "the regularization chapter" needs.
+    """
+
+    __tablename__ = "section_summaries"
+
+    doc_id: Mapped[str] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"), primary_key=True)
+    section_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    title: Mapped[str] = mapped_column(Text, default="")
+    page: Mapped[int] = mapped_column(Integer, default=1)
+    summary: Mapped[str] = mapped_column(Text, default="")
+    block_ids: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
 
 
 class ReferenceRow(Base):
