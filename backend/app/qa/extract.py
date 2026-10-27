@@ -25,7 +25,7 @@ from pydantic import BaseModel, Field
 
 from ..llm.errors import LLMError
 from .prompt import Evidence, extraction_messages
-from .verify import contains
+from .verify import grounds
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +102,7 @@ def _checked(field: ExtractedField, evidence: list[Evidence]) -> ExtractedField:
     number = field.evidence
     if not value or number is None or not 1 <= number <= len(evidence):
         return ExtractedField(name=name, value=None, evidence=None)
-    if not contains(evidence[number - 1].text, value):
+    if not grounds(evidence[number - 1].text, value):
         logger.info("extracted field %r not found in evidence [%s]; nulled", name, number)
         return ExtractedField(name=name, value=None, evidence=None)
     return ExtractedField(name=name, value=value, evidence=number)

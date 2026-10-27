@@ -1,10 +1,12 @@
-"""`POST /qa`: the SSE answer stream (01 §5.2, T3.3).
+"""`POST /qa`: the SSE answer stream (01 §5.2, T3.3/T3.4).
 
 Events, in the contract's order: `token` for each verified sentence, `anchor`
 when a marker first appears, then `done` with the whole `QAAnswer`, or `error`
 with the H17 envelope. The stream sends an SSE comment every ten seconds while
 retrieval, reranking and generation run, because a first byte that takes 30
-seconds looks like a dead connection to proxies and to the browser.
+seconds looks like a dead connection to proxies and to the browser. Compare
+mode emits the deterministic summary as one `token` and the `CompareTable`
+inside `done`; its anchors live on the cells, not on markers.
 
 Retrieval needs the request's DB session, so the pipeline runs as a task inside
 the streaming generator rather than as a dependency: the session's lifetime
@@ -29,6 +31,7 @@ from ..deps import SessionDep
 from ..errors import AppError, InvalidRequest
 from ..llm.errors import LLMError
 from ..qa.answer import run_qa
+from ..qa.compare import run_compare
 from ..rag.retrieve import Scope
 
 logger = logging.getLogger(__name__)
@@ -62,17 +65,16 @@ def _error_payload(code: str, message: str, detail: dict[str, Any] | None = None
 
 @router.post("/qa")
 async def ask(request: Request, body: AskBody, session: SessionDep) -> StreamingResponse:
-    if body.mode != "qa":
-        # T3.4 implements compare; until then the caller must not silently get
-        # a single-document answer labelled as a comparison.
-        raise InvalidRequest("对比模式尚未实现", code="mode_not_implemented")
     question = body.question.strip()
     if not question:
         raise InvalidRequest("问题不能为空")
     scope = Scope(type=body.scope.type, doc_ids=list(body.scope.doc_ids))
 
     async def events() -> AsyncIterator[str]:
-        task = asyncio.create_task(run_qa(session, question, scope))
+        if body.mode == "compare":
+            task = asyncio.create_task(run_compare(session, question, scope))
+        else:
+            task = asyncio.create_task(run_qa(session, question, scope))
         try:
             while True:
                 done, _ = await asyncio.wait({task}, timeout=KEEPALIVE_S)

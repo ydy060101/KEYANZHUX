@@ -9,6 +9,7 @@ from __future__ import annotations
 from app.qa.prompt import Evidence
 from app.qa.verify import (
     contains,
+    grounds,
     is_not_found,
     parse_markers,
     split_sentences,
@@ -65,6 +66,25 @@ def test_comparison_normalises_dashes_and_space_but_not_letters() -> None:
     assert contains("value ϵ = 10−9 here", "10-9")
     assert contains("dropout  Pdrop = 0.1", "Pdrop = 0.1")
     assert not contains("Adam optimizer", "adam")
+
+
+def test_a_number_is_only_grounded_as_a_whole_token() -> None:
+    row = "GPT-3 175B 96 12288 96 128 3.2M"
+    assert grounds(row, "96")
+    assert grounds(row, "12288")
+    assert not grounds(row, "12")  # a prefix of 12288
+    assert not grounds(row, "1228")  # a prefix of 12288
+    assert grounds(row, "175")  # the number part of 175B, a unit suffix
+    assert grounds(row, "175B")
+
+
+def test_grounding_accepts_sentence_punctuation_but_not_decimals() -> None:
+    assert grounds("The base model uses 512.", "512")
+    assert grounds("H=768 and A=12", "12")
+    assert not grounds("H=768", "76")
+    assert not grounds("a rate of 12.5", "12")
+    assert grounds("a rate of 12.5", "12.5")
+    assert not grounds("N = 6", "N=6")
 
 
 def test_not_found_sentinel_allows_trailing_punctuation() -> None:

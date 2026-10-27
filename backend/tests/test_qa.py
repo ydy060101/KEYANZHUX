@@ -18,7 +18,8 @@ from sqlalchemy import select
 from app.llm.errors import LLMUnavailable
 from app.models.orm import Block
 from app.models.schemas import Anchor
-from app.qa.answer import QaOutcome, _anchor, run_qa
+from app.qa.anchor import pick_anchor
+from app.qa.answer import QaOutcome, run_qa
 from app.qa.prompt import Evidence
 from app.qa.schemas import Citation, QAAnswer
 from app.rag.retrieve import Scope
@@ -115,7 +116,7 @@ def test_the_anchor_prefers_the_block_holding_the_rare_number() -> None:
             text="The WMT 2014 English-French set has 36M sentences.",
         ),
     }
-    anchor = _anchor("The WMT 2014 English-French set has 36M sentences.", evidence, blocks)
+    anchor = pick_anchor("The WMT 2014 English-French set has 36M sentences.", evidence, blocks)
     assert anchor is not None
     assert anchor.page == 7
     assert anchor.block_id == "b7"
@@ -329,12 +330,3 @@ async def test_the_endpoint_reports_a_model_failure_as_an_event(
     )
     assert "event: error" in response.text
     assert "llm_unavailable" in response.text
-
-
-async def test_compare_mode_is_not_silently_answered(session: Any, app_client: AsyncClient) -> None:
-    response = await app_client.post(
-        "/api/v1/qa",
-        json={"question": "hi", "scope": {"type": "doc", "doc_ids": [DOC]}, "mode": "compare"},
-    )
-    assert response.status_code == 400
-    assert response.json()["error"]["code"] == "mode_not_implemented"

@@ -103,6 +103,28 @@ def contains(haystack: str, needle: str) -> bool:
     return bool(needle) and normalise(needle) in normalise(haystack)
 
 
+def grounds(haystack: str, needle: str) -> bool:
+    """`contains`, but a token containing a digit must be a whole number.
+
+    Substring matching mis-grounds numbers: "12" occurs inside "12288" and
+    "128", so a model could cite the wrong row of a table and still pass H04 —
+    exactly what a real compare run did with GPT-3's layer count. A token with
+    any digit in it must not start inside a word or a decimal, and must not be
+    the prefix of a longer number ("12" is not support for "12.5" or "12288").
+    A unit suffix is not a digit: "36" is grounded by "36M", the way H04's
+    tokenizer splits that source. Tokens without digits ("Adam", "masked
+    language model") stay substring matches.
+    """
+    text = normalise(haystack)
+    target = normalise(needle)
+    if not target:
+        return False
+    if any(char.isdigit() for char in target):
+        pattern = rf"(?<![\w.]){re.escape(target)}(?!\d)(?!\.\d)"
+        return re.search(pattern, text) is not None
+    return target in text
+
+
 def split_sentences(text: str) -> list[str]:
     """Sentence boundaries, without splitting "e.g. The model" or "3.5".
 
@@ -212,7 +234,7 @@ def verify_answer(raw: str, evidence: list[Evidence]) -> Verification:
             continue
         cited_text = " ".join(texts[number] for number in valid)
         tokens = verifiable_tokens(sentence)
-        missing = [token for token in tokens if not contains(cited_text, token)]
+        missing = [token for token in tokens if not grounds(cited_text, token)]
         if missing:
             flags.append(
                 QaFlag(

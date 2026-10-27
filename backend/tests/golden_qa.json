@@ -5,6 +5,16 @@
       "fixture": "1706.03762v1.pdf",
       "title": "Attention Is All You Need",
       "arxiv_id": "1706.03762v1"
+    },
+    "bert": {
+      "fixture": "1810.04805_bert.pdf",
+      "title": "BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding",
+      "arxiv_id": "1810.04805"
+    },
+    "gpt3": {
+      "fixture": "2005.14165_gpt3.pdf",
+      "title": "Language Models are Few-Shot Learners",
+      "arxiv_id": "2005.14165"
     }
   },
   "entries": [
@@ -204,6 +214,118 @@
       "doc": "transformer",
       "question": "How many TPUs did BERT use for pretraining?",
       "reason": "BERT is not in scope; the paper's hardware passage must not be reused as an answer"
+    }
+  ],
+  "cross": [
+    {
+      "id": "x01",
+      "scope": "cross",
+      "question": "Compare the number of layers in Transformer-base, BERT-base and GPT-3.",
+      "dimensions": ["number of layers"],
+      "expected": {
+        "transformer": {"points": ["N = 6"], "pages": [2]},
+        "bert": {"points": ["L=12"], "pages": [3]},
+        "gpt3": {"points": ["96"], "pages": [8]}
+      }
+    },
+    {
+      "id": "x02",
+      "scope": "cross",
+      "question": "Compare the hidden size of Transformer-base, BERT-base and GPT-3.",
+      "dimensions": ["hidden size"],
+      "expected": {
+        "transformer": {"points": ["dmodel = 512"], "pages": [2]},
+        "bert": {"points": ["H=768"], "pages": [3]},
+        "gpt3": {"points": ["12288"], "pages": [8]}
+      }
+    },
+    {
+      "id": "x03",
+      "scope": "cross",
+      "question": "Compare the number of attention heads in Transformer-base, BERT-base and GPT-3.",
+      "dimensions": ["attention heads"],
+      "expected": {
+        "transformer": {"points": ["h = 8"], "pages": [4]},
+        "bert": {"points": ["A=12"], "pages": [3]},
+        "gpt3": {"points": ["96"], "pages": [8]}
+      }
+    },
+    {
+      "id": "x04",
+      "scope": "cross",
+      "question": "Compare the pre-training corpora used by the three papers.",
+      "dimensions": ["pre-training data"],
+      "expected": {
+        "transformer": {"points": ["WMT 2014 English-German"], "pages": [6]},
+        "bert": {"points": ["BooksCorpus"], "pages": [5]},
+        "gpt3": {"points": ["Common Crawl"], "pages": [8]}
+      }
+    },
+    {
+      "id": "x05",
+      "scope": "cross",
+      "question": "Compare the optimizers used to train the three models.",
+      "dimensions": ["optimizer"],
+      "expected": {
+        "transformer": {"points": ["Adam"], "pages": [7]},
+        "bert": {"points": ["Adam"], "pages": [13]},
+        "gpt3": {"points": ["Adam"], "pages": [43]}
+      }
+    },
+    {
+      "id": "x06",
+      "scope": "cross",
+      "question": "Compare the model architecture families of the three papers.",
+      "dimensions": ["model architecture"],
+      "expected": {
+        "transformer": {"points": ["encoder-decoder"], "pages": [1]},
+        "bert": {"points": ["bidirectional"], "pages": [1]},
+        "gpt3": {"points": ["transformer language model"], "pages": [4]}
+      }
+    },
+    {
+      "id": "x07",
+      "scope": "cross",
+      "question": "Compare the pre-training objectives of the three papers.",
+      "dimensions": ["pre-training objective"],
+      "expected": {
+        "transformer": {"points": ["machine translation"], "pages": [7]},
+        "bert": {"points": ["masked language model"], "pages": [2]},
+        "gpt3": {"points": ["autoregressive language model"], "pages": [5]}
+      }
+    },
+    {
+      "id": "x08",
+      "scope": "cross",
+      "question": "Compare the main evaluation benchmarks used by the three papers.",
+      "dimensions": ["evaluation benchmark"],
+      "expected": {
+        "transformer": {"points": ["BLEU"], "pages": [8]},
+        "bert": {"points": ["GLUE"], "pages": [5]},
+        "gpt3": {"points": ["SuperGLUE"], "pages": [5]}
+      }
+    },
+    {
+      "id": "x09",
+      "scope": "cross",
+      "question": "Compare how the three models encode positional information.",
+      "dimensions": ["positional information"],
+      "expected": {
+        "transformer": {"points": ["positional encoding"], "pages": [5]},
+        "bert": {"points": ["position embeddings"], "pages": [4]},
+        "gpt3": {"absent": true, "not_in": ["positional", "position embedding", "position encoding"]}
+      }
+    },
+    {
+      "id": "x10",
+      "scope": "cross",
+      "question": "Compare the hardware used to train the three models.",
+      "dimensions": ["training hardware"],
+      "expected": {
+        "transformer": {"points": ["8 NVIDIA P100"], "pages": [7]},
+        "bert": {"points": ["Cloud TPUs"], "pages": [13]},
+        "gpt3": {"points": ["V100"], "pages": [9]}
+      }
     }
   ]
 }

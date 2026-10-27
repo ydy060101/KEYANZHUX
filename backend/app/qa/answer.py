@@ -31,20 +31,20 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from sqlalchemy import select, tuple_
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import get_settings
 from ..errors import InvalidRequest
 from ..llm.gateway import get_gateway
 from ..models.orm import Block, Document
-from ..models.schemas import Anchor
 from ..rag.embedding import Embedder, get_embedder
 from ..rag.retrieve import RetrievalResult, Scope, retrieve
+from .anchor import load_blocks, pick_anchor
 from .extract import extract_fields, is_metadata_question
 from .prompt import Evidence, answer_messages, build_evidence
-from .schemas import Citation, QAAnswer, QaFlag
-from .verify import VerifiedSentence, contains, verifiable_tokens, verify_answer
+from .schemas import Citation, CompareTable, QAAnswer, QaFlag
+from .verify import VerifiedSentence, verify_answer
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +59,7 @@ class QaOutcome:
     events: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
     stages: dict[str, Any] = field(default_factory=dict)
     evidence: list[Evidence] = field(default_factory=list)
+    table: CompareTable | None = None
 
 
 async def run_qa(
@@ -96,7 +97,7 @@ async def run_qa(
         reason = "模型判断所给证据未包含答案" if verification.not_found else "回答未通过证据回验，已拒答"
         return _refusal(reason, stages, verification.flags)
 
-    blocks = await _load_blocks(session, evidence)
+    blocks = await load_blocks(session, evidence)
     kept, citations, flags = _resolve(verification.sentences, evidence, blocks, verification.flags)
     if not kept:
         return _refusal("引用的片段找不到对应的块锚点", stages, flags)
@@ -145,44 +146,7 @@ async def _facts(
     return facts
 
 
-# ---- anchors -------------------------------------------------------------
-
-
-async def _load_blocks(session: AsyncSession, evidence: list[Evidence]) -> dict[tuple[str, str], Block]:
-    pairs = {(item.doc_id, block_id) for item in evidence for block_id in item.block_ids}
-    if not pairs:
-        return {}
-    rows = await session.scalars(select(Block).where(tuple_(Block.doc_id, Block.id).in_(list(pairs))))
-    return {(row.doc_id, row.id): row for row in rows}
-
-
-def _anchor(sentence: str, evidence: Evidence, blocks: dict[tuple[str, str], Block]) -> Anchor | None:
-    """The block of the cited chunk that best supports the sentence.
-
-    A chunk spans blocks and often pages; the anchor must point at the one
-    holding the answer, not merely at the chunk's first block. A matched token
-    is weighted by how rare it is in the chunk: "36M" occurs once and locates
-    its own page, while "WMT" or "Transformer" occurs in several blocks and
-    barely discriminates. Ties keep reading order, and no candidate means the
-    citation is dropped rather than given an invented bbox (H01, H06).
-    """
-    candidates = [
-        blocks[(evidence.doc_id, block_id)]
-        for block_id in evidence.block_ids
-        if (evidence.doc_id, block_id) in blocks
-    ]
-    if not candidates:
-        return None
-    tokens = verifiable_tokens(sentence)
-    counts = {token: max(1, evidence.text.count(token)) for token in tokens}
-    best: Block | None = None
-    best_score = -1.0
-    for block in sorted(candidates, key=lambda row: (row.reading_order, row.id)):
-        score = sum(1.0 / counts[token] for token in tokens if contains(block.text or "", token))
-        if score > best_score:
-            best, best_score = block, score
-    assert best is not None
-    return Anchor(doc_id=evidence.doc_id, block_id=best.id, page=best.page, bbox=list(best.bbox or []))
+# ---- assembly ------------------------------------------------------------
 
 
 def _resolve(
@@ -198,7 +162,7 @@ def _resolve(
     for sentence in sentences:
         markers: list[str] = []
         for number in sentence.markers:
-            anchor = _anchor(sentence.text, evidence[number - 1], blocks)
+            anchor = pick_anchor(sentence.text, evidence[number - 1], blocks)
             if anchor is None:
                 flags.append(
                     QaFlag(kind="invalid_citation", text=f"证据 [{number}] 找不到对应块，已忽略")

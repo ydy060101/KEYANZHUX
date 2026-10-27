@@ -36,3 +36,31 @@ class QAAnswer(BaseModel):
 
     def as_dict(self) -> dict[str, object]:
         return self.model_dump(mode="json")
+
+
+class CompareCell(BaseModel):
+    """One paper's value on one dimension, with the anchors supporting it.
+
+    `text` is copied from the source and checked against it; a cell with no
+    evidence says `未在原文找到` and carries no citation (H01/H02).
+    """
+
+    text: str
+    citations: list[Anchor] = Field(default_factory=list)
+
+
+class CompareRow(BaseModel):
+    dimension: str
+    cells: dict[str, CompareCell] = Field(default_factory=dict)
+
+
+class CompareTable(BaseModel):
+    """The openapi `CompareTable`: rows are dimensions, columns are documents."""
+
+    dimensions: list[str] = Field(default_factory=list)
+    table: list[CompareRow] = Field(default_factory=list)
+    summary: str = ""
+    flags: list[QaFlag] = Field(default_factory=list)
+
+    def as_dict(self) -> dict[str, object]:
+        return self.model_dump(mode="json")
