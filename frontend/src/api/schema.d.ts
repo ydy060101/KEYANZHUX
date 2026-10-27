@@ -501,6 +501,53 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/documents/{id}/embed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start the embedding pass for a parsed document (T3.1)
+         * @description Fills `chunks.embedding` with bge-m3 vectors. Separate from the parse so a document is readable and full-text searchable while the model is loading or unavailable; the pass is resumable and skips chunks that already have a vector.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["DocId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Embedding job queued */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** Format: uuid */
+                            doc_id: string;
+                            /** Format: uuid */
+                            job_id: string;
+                        };
+                    };
+                };
+                "4XX": components["responses"]["ClientError"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/documents/{id}/translate": {
         parameters: {
             query?: never;
@@ -1742,6 +1789,12 @@ export interface components {
                 cited_references?: number;
                 uncited_references?: number;
                 dangling_citations?: number;
+                /** @description Retrieval chunks written by the index (T3.1) */
+                chunks?: number;
+                /** @description Chunks that already hold a bge-m3 vector (T3.1) */
+                embedded?: number;
+                /** @description Rows in the section level of the index (T2.5) */
+                sections?: number;
             };
         };
         DocumentPage: {

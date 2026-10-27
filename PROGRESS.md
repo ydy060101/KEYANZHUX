@@ -40,7 +40,7 @@ command passes and its commit exists.
 
 | Card | Status | Notes |
 |---|---|---|
-| T3.1 Chunking and indexing | not started | |
+| T3.1 Chunking and indexing | complete | Chunks are aggregated whole blocks, never crossing a section, with `block_ids[]` on every row so a hit maps back to an anchor (H01). bge-m3 vectors are filled by their own job (`kind="embed"`, `POST /documents/{id}/embed`), because a 2 GB model must not gate the parse (CR-011); the pass is resumable, idempotent, and fails loudly when the model is missing (H08) rather than reporting success with no vectors. HNSW (`m=16`, `ef_construction=64`, `vector_cosine_ops`) and a GIN index over the generated `tsv` are declared on the table and added to an existing database by `tools/sync_schema.py`. Two chunker defects found on the fixtures and fixed: 54 blocks of Transformer v1 and 76 of GPT-3 have no letter in them (folio numbers, a stray √) and each was becoming a chunk whose whole text was "3"; and an overlap tail that closed on its own after a section break was emitted as a chunk wholly contained in its predecessor (2 in GPT-3). Real model verified: 45 chunks of Attention v1 embedded in 51 s, and 3/3 probe queries return the passage that answers them (score spread 0.148 over the top 20) — `tools/check_embedding.py` reports **E1: PASS**. 26 pytest in `test_rag_index.py`. |
 | T3.2 Hybrid retrieval | not started | |
 | T3.3 QA with provenance | not started | |
 | T3.4 Multi-document compare | not started | |

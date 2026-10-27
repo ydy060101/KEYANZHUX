@@ -45,7 +45,7 @@ from ..ingest.windows import Window, is_long, plan
 from ..llm.gateway import get_gateway
 from ..models.orm import Document
 from ..models.schemas import Block, DocumentModel
-from ..rag.chunk import Chunker
+from ..rag.chunk import Chunker, ChunkStats, chunk_stats, estimate_tokens
 from ..rag.index import write_index
 from . import persist
 from .queue import JobService
@@ -138,10 +138,10 @@ async def _parse_short(
         await JobService(session).progress(job_id, stage="persist", progress=0.85)
         await persist.clear_document(session, doc_id)
         await persist.persist_parse(session, model)
-        await _index_all(session, model)
+        chunks = await _index_all(session, model)
         await _store_fingerprint(session, model)
 
-    result = _result(model, coverage)
+    result = _result(model, coverage, chunks)
     await _maybe_recheck(doc_id, model, result)
     _log_result(doc_id, model, coverage)
     return result
@@ -172,6 +172,10 @@ async def _parse_long(
     total_blocks = total_assets = 0
     total_references = total_citations = 0
     coverage: Any = None
+    # Chunk sizes are recorded as they are written, never the drafts: the whole
+    # book is 3 000 chunks of text, and holding them for a statistic would undo
+    # what windowing bought (H11).
+    chunk_tokens: list[int] = []
     # Metadata comes from the opening pages, which are in the first window;
     # holding the whole book to read them again at the end would defeat the
     # point of windowing (H11).
@@ -215,6 +219,7 @@ async def _parse_long(
         if window.index == 1:
             first_blocks = list(result.blocks)
         drafts = chunker.feed(result.blocks)
+        chunk_tokens.extend(estimate_tokens(draft.text) for draft in drafts)
         async with factory() as session:
             await persist.persist_window(
                 session,
@@ -268,6 +273,7 @@ async def _parse_long(
 
         final = chunker.flush()
         if final:
+            chunk_tokens.extend(estimate_tokens(draft.text) for draft in final)
             await write_index(session, doc_id, [], tracker.outline(), final)
         doc = await session.get(Document, doc_id)
         if doc is None:
@@ -289,6 +295,12 @@ async def _parse_long(
         "assets": total_assets,
         "windows": len(windows),
         "coverage": coverage.as_dict() if coverage is not None else {},
+        "chunks": chunk_stats(
+            [],
+            skipped_furniture=chunker.skipped_furniture,
+            extra_tokens=chunk_tokens,
+            sections=len(tracker.outline()),
+        ).as_dict(),
     }
     logger.info(
         "parsed long doc_id=%s windows=%d blocks=%d pages=%d",
@@ -306,15 +318,18 @@ def _window_progress(window: Window, total: int) -> float:
     return 0.1 + span * window.index / max(1, total)
 
 
-async def _index_all(session: AsyncSession, model: DocumentModel) -> None:
+async def _index_all(session: AsyncSession, model: DocumentModel) -> ChunkStats:
     """Build the two-level index for a short document in one pass."""
     chunker = Chunker()
     drafts = chunker.feed(model.blocks) + chunker.flush()
     await write_index(session, model.doc_id, model.blocks, model.outline, drafts)
     await session.commit()
+    return chunk_stats(drafts, skipped_furniture=chunker.skipped_furniture)
 
 
-def _result(model: DocumentModel, coverage: Any) -> dict[str, Any]:
+def _result(
+    model: DocumentModel, coverage: Any, chunks: ChunkStats | None = None
+) -> dict[str, Any]:
     return {
         "doc_id": model.doc_id,
         "blocks": len(model.blocks),
@@ -323,6 +338,7 @@ def _result(model: DocumentModel, coverage: Any) -> dict[str, Any]:
         "citations": len(model.citations),
         "assets": len(model.assets),
         "coverage": coverage.as_dict(),
+        "chunks": chunks.as_dict() if chunks is not None else None,
     }
 
 

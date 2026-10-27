@@ -64,3 +64,30 @@ Per AGENTS.md §2.4, ambiguities are recorded here rather than guessed at.
 - **`page` was added to the citation and reference payloads.** The reader has to draw a marker's box on the right page; deriving it from `block_id` on the client would duplicate the id scheme in TypeScript. Additive, recorded as CR-009.
 - **A caption need not be punctuated after its number.** The book sets every caption as "Figure 1.1 Machine learning is an area of…", with no colon, and prints 290 of them — while T2.4 had narrowed `_CAPTION` to require a colon or a full stop precisely because "Table 2.1 shows the sizes" was being misread. Both constraints are satisfiable: the punctuation is optional, and what separates the two is the capital that follows (a title starts a phrase, a sentence continues one). `Figure 1.2 depicts several regression problems` is prose on page 16; `Figure 1.2 Regression and classification problems.` is its caption on page 17. Before this the book's figure and table lists were empty and every one of its 272 captions was invisible to the reader.
 - **The table detector is asked with every strategy, and its answer must sit inside the crop.** The default strategy found no table at all on 11 of the 15 pages checked, and the `text` strategy returns one box spanning the whole page — which overlaps every table region on that page, so the old "shares any area" test accepted it and the reader would have shown the page's body text as the table's cells. `lines_strict`, `lines` and `text` are now all tried, and a candidate must be no more than 1.5× the crop's area with at least 70 % of itself inside the crop. Coverage on the fixture papers is still partial (1 of 4, 1 of 7, 0 of 13): their tables are borderless and set in a single column of text, which PyMuPDF's detector does not separate into cells. The crop is the fallback 02 §4.2 asks for, and it is written for every table.
+
+## Decisions taken during T3.1
+
+- **The embedding pass is its own job (`kind="embed"`), not a step of the parse.** bge-m3 is a 2 GB local model that takes minutes to load; putting it inside the parse would mean no window is searchable until it is loaded, which breaks T2.5's "已完成窗口可提前检索" and H08. The parse still writes chunks with `embedding` NULL and a generated `tsv`, so lexical retrieval works immediately; `POST /documents/{id}/embed` fills the vectors when the model is available, and is resumable (it selects `embedding IS NULL`) and idempotent. Recorded as CR-011.
+- **The vector index is HNSW with `vector_cosine_ops`.** bge-m3 vectors are L2-normalised at encode time, so cosine and inner product rank identically, but the query uses cosine and the index has to match the operator or PostgreSQL silently falls back to a sequential scan. `m=16, ef_construction=64` are pgvector's own defaults for a corpus of this size (thousands of chunks, not millions).
+- **Blocks with no letter in them are page furniture and are not chunked.** Transformer v1 has 54 such blocks (folio numbers, a stray `√`) and GPT-3 has 76; each was becoming a chunk whose entire text was "3", competing with real paragraphs in retrieval. The rule is `len < 40 chars AND no letter`, so a short word ("Yes") and a numeric table row are both kept — the length cap is what tells them apart.
+- **An overlap tail that closes on its own is dropped, not emitted.** When the tail of a chunk was carried forward and the next block started a new section, the tail was emitted alone — a chunk wholly contained in its predecessor. GPT-3's fixtures produced two before the guard. A chunk that adds no block the previous one did not already have is an echo, and retrieval would return the same text twice for one query.
+- **Chunk sizes are estimated with `len / 4`, and the statistics are reported rather than enforced.** 01 §9's 300–600 is a target: a section that is one paragraph is one short chunk, and a single block over 600 tokens cannot be split without cutting a sentence. The parse result now carries the distribution (`chunks` in the job result) so a chunking regression is visible without reading the rows, and the tests assert what is hard (no cross-section chunk, every chunk names its blocks, the median is a real paragraph, no echoes) rather than a percentage that a legitimately short section would fail.
+- **The bge-m3 weights came from ModelScope, not the Hugging Face mirror.** hf-mirror.com delivered the 2.27 GB `pytorch_model.bin` at ~0.3 MB/s and dropped the connection repeatedly; the Hugging Face Xet transfer path returned 401 on this machine. modelscope.cn served the same file at 3–6 MB/s, and `curl -C -` resumed after each drop. The file is placed directly in the HF cache snapshot, and the tokenizer files (`tokenizer.json`, `sentencepiece.bpe.model`) were fetched the same way. This is a download workaround, not a code change: `Embedder` still loads by model name through `sentence_transformers`, and a machine with working HF access needs none of it.
+
+## Environment note (T3.1)
+
+- **`paddlepaddle` is installed as an empty package directory.** The OCR
+  optional dependency set (`paddlepaddle==3.2.0`, `paddleocr==3.7.0`,
+  `paddlex==3.7.2`) resolved earlier, but the installed `paddle/` directory
+  holds no files at all — `import paddle` returns a namespace package with no
+  attributes. Every OCR path therefore degrades to "engine unavailable"
+  (`ocr._engine` catches it and logs), which is H08-correct behaviour but means
+  the two tests that depend on OCR (`tests/test_ocr.py`,
+  `tests/test_dedup.py::test_a_scan_matches_its_vector_original`) fail rather
+  than pass. This is an environment defect, not a code one: the reinstall of
+  the 101 MB `paddlepaddle` wheel is blocked by repeated read timeouts from
+  both `files.pythonhosted.org` and the Tsinghua mirror, and `curl -C -` needs
+  many resumes. It does not affect T3.1 — chunking and embedding use
+  `sentence-transformers`, not paddle — and it is tracked here rather than
+  worked around, because weakening the two tests to pass without an OCR engine
+  would hide a real regression (AGENTS.md §4).

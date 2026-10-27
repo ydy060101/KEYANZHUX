@@ -221,6 +221,15 @@ components:
             cited_references: { type: integer }
             uncited_references: { type: integer }
             dangling_citations: { type: integer }
+            chunks:
+              type: integer
+              description: Retrieval chunks written by the index (T3.1)
+            embedded:
+              type: integer
+              description: Chunks that already hold a bge-m3 vector (T3.1)
+            sections:
+              type: integer
+              description: Rows in the section level of the index (T2.5)
 
     DocumentPage:
       type: object
@@ -789,6 +798,29 @@ paths:
               schema:
                 type: array
                 items: { $ref: "#/components/schemas/Reference" }
+        "4XX":
+          $ref: "#/components/responses/ClientError"
+
+  /documents/{id}/embed:
+    post:
+      summary: Start the embedding pass for a parsed document (T3.1)
+      description: >
+        Fills `chunks.embedding` with bge-m3 vectors. Separate from the parse
+        so a document is readable and full-text searchable while the model is
+        loading or unavailable; the pass is resumable and skips chunks that
+        already have a vector.
+      parameters: [{ $ref: "#/components/parameters/DocId" }]
+      responses:
+        "202":
+          description: Embedding job queued
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [doc_id, job_id]
+                properties:
+                  doc_id: { type: string, format: uuid }
+                  job_id: { type: string, format: uuid }
         "4XX":
           $ref: "#/components/responses/ClientError"
 

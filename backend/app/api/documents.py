@@ -23,6 +23,7 @@ from ..ingest import storage
 from ..ingest.validate import validate_upload
 from ..models.orm import AssetRow, CitationRow, Document, ReferenceRow, SectionSummaryRow
 from ..models.orm import Block as BlockRow
+from ..models.orm import Chunk as ChunkRow
 from ..workers import queue
 
 logger = logging.getLogger(__name__)
@@ -61,6 +62,26 @@ def _document_payload(doc: Document, stats: dict[str, int] | None = None) -> dic
 async def _stats(session: AsyncSession, doc_id: str) -> dict[str, int]:
     """Counts for one document's card (the detail endpoint)."""
     return (await _stats_many(session, [doc_id]))[doc_id]
+
+
+async def _index_stats(session: AsyncSession, doc_id: str) -> dict[str, int]:
+    """Chunk counts for the detail endpoint: how much is indexed and embedded.
+
+    T3.1's embedding pass is separate from the parse, so a document can be
+    fully chunked and only partly embedded; the reader of this endpoint needs
+    both numbers to know whether a vector search will see the whole document.
+    """
+    rows = await session.execute(
+        select(
+            func.count(),
+            func.count(ChunkRow.embedding),
+        ).where(ChunkRow.doc_id == doc_id)
+    )
+    chunks, embedded = rows.one()
+    sections = await session.scalar(
+        select(func.count()).select_from(SectionSummaryRow).where(SectionSummaryRow.doc_id == doc_id)
+    )
+    return {"chunks": int(chunks or 0), "embedded": int(embedded or 0), "sections": int(sections or 0)}
 
 
 def _empty_stats() -> dict[str, int]:
@@ -586,7 +607,35 @@ async def get_references(doc_id: str, session: SessionDep) -> list[dict[str, Any
 @router.get("/documents/{doc_id}")
 async def get_document(doc_id: str, session: SessionDep) -> dict[str, Any]:
     doc = await _load(session, doc_id)
-    return _document_payload(doc, await _stats(session, doc_id))
+    stats = await _stats(session, doc_id)
+    stats.update(await _index_stats(session, doc_id))
+    return _document_payload(doc, stats)
+
+
+@router.post("/documents/{doc_id}/embed", status_code=202)
+async def embed_document(
+    doc_id: str, session: SessionDep, user: UserIdDep
+) -> dict[str, Any]:
+    """Start the T3.1 embedding pass for one document.
+
+    Separate from the parse on purpose (`embed_pass.py` explains): the model is
+    slow and may be unavailable, and a document is already readable and
+    BM25-searchable without it. Returns a `job_id` for the progress stream.
+    """
+    doc = await _load(session, doc_id)
+    if doc.status not in {"ready", "parsing"}:
+        from ..errors import Conflict
+
+        raise Conflict(
+            "文献尚未解析完成，暂时无法建立向量索引", detail={"status": doc.status}
+        )
+    job = await queue.JobService(session).create(
+        kind="embed", payload={"doc_id": doc_id}, user=user
+    )
+    await session.commit()
+    if not await queue.enqueue(job.id):
+        asyncio.create_task(queue.run_in_background(job.id))
+    return {"doc_id": doc_id, "job_id": job.id}
 
 
 @router.patch("/documents/{doc_id}")

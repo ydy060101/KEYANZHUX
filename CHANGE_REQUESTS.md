@@ -143,3 +143,21 @@ contract stays unchanged until a human approves it (AGENTS.md §2.3).
 - **Impact:** Additive. The field is read from the row that already holds it.
 - **Proposal:** Add the field to the outline item schema and its builder.
 - **Status:** Applied in T2.6. Awaiting human approval.
+
+## CR-011 — `POST /documents/{id}/embed` and chunk counters on the detail payload
+
+- **Request:** Add `POST /documents/{id}/embed` (202, returns `{doc_id, job_id}`)
+  and `chunks` / `embedded` / `sections` on `Document.stats`.
+- **Reason:** 01 §7 stage 10 puts chunking, embedding and indexing together, but
+  the embedding model is a 2 GB local model that takes minutes to load and is
+  unavailable on a machine that has not downloaded it. Making it a step of the
+  parse would mean no window is searchable until the model is there, which
+  contradicts T2.5's acceptance ("已完成窗口可提前检索") and H08 (degrade, do not
+  block). A separate job also gives the user a retry once the model is present.
+  The counters exist because the pass is separate: without them a client cannot
+  tell a document that is fully embedded from one that is only chunked.
+- **Impact:** Additive. One new path, three new optional fields in an object that
+  already carries an open set of counters. `kind="embed"` joins the job kinds.
+- **Proposal:** Add the path and the fields; the parse still writes chunks with
+  `embedding` null.
+- **Status:** Applied in T3.1. Awaiting human approval.

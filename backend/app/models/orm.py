@@ -14,6 +14,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -126,6 +127,26 @@ class Chunk(Base):
     )
 
     document: Mapped[Document] = relationship(back_populates="chunks")
+
+    # The two indexes retrieval reads (T3.1, 01 §9): a cosine HNSW graph over
+    # the vectors and a GIN index over the generated tsvector. Declared here so
+    # `create_all` builds them with the table; a database that already has the
+    # table gets them from `tools/sync_schema.py` (see ADDED_INDEXES there).
+    #
+    # `vector_cosine_ops` matches how the retriever compares: bge-m3 vectors
+    # are L2-normalised at encode time, so cosine and inner product rank
+    # identically, but cosine is the operator the query will use and the index
+    # has to match it or PostgreSQL falls back to a sequential scan.
+    __table_args__ = (
+        Index(
+            "ix_chunks_embedding_hnsw",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_with={"m": 16, "ef_construction": 64},
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+        Index("ix_chunks_tsv", "tsv", postgresql_using="gin"),
+    )
 
 
 class SectionSummaryRow(Base):

@@ -162,6 +162,9 @@ async def main() -> int:
         references = await session.scalar(
             select(func.count()).select_from(ReferenceRow).where(ReferenceRow.doc_id == doc_id)
         )
+        embedded = await session.scalar(
+            select(func.count()).select_from(Chunk).where(Chunk.doc_id == doc_id, Chunk.embedding.is_not(None))
+        )
         assert row is not None and doc is not None
         print(f"\njob: {row.status} stage={row.stage} progress={row.progress:.2f} error={row.error}")
         print(f"doc: status={doc.status} pages={doc.page_count} source_kind={doc.source_kind}")
@@ -169,6 +172,9 @@ async def main() -> int:
             f"stored: blocks={blocks} pages={pages} chunks={chunks} "
             f"sections={sections} headings={headings} references={references}"
         )
+        # T3.1: the parse writes chunks with `embedding` NULL by design; this is
+        # printed so a run that embedded nothing is visible rather than assumed.
+        print(f"embedded chunks: {embedded} of {chunks} (the embed job fills these, T3.1)")
         print(f"elapsed {elapsed:.1f}s")
 
     windows = [item for item in stages if item[1].startswith("window")]

@@ -54,6 +54,19 @@ ADDED_COLUMNS = {
     },
 }
 
+# Indexes added after a table was created. `create_all` builds a table's
+# indexes only when it creates the table, so an existing `chunks` table needs
+# them explicitly (T3.1). `IF NOT EXISTS` makes the script re-runnable.
+ADDED_INDEXES = [
+    (
+        "ix_chunks_embedding_hnsw",
+        "CREATE INDEX IF NOT EXISTS ix_chunks_embedding_hnsw "
+        "ON chunks USING hnsw (embedding vector_cosine_ops) "
+        "WITH (m = 16, ef_construction = 64)",
+    ),
+    ("ix_chunks_tsv", "CREATE INDEX IF NOT EXISTS ix_chunks_tsv ON chunks USING gin (tsv)"),
+]
+
 
 async def main(dry_run: bool) -> int:
     engine = db.get_engine()
@@ -91,6 +104,15 @@ async def main(dry_run: bool) -> int:
     for table, column, ddl in added:
         async with engine.begin() as conn:
             await conn.execute(text(f'ALTER TABLE "{table}" ADD COLUMN "{column}" {ddl}'))
+    for name, ddl in ADDED_INDEXES:
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(text(ddl))
+        except Exception as exc:  # pragma: no cover - needs an older pgvector
+            # An HNSW index needs pgvector >= 0.5. Saying so beats a stack
+            # trace: the app still works without it, just with a sequential
+            # scan over the vectors.
+            print(f"index {name} not created ({type(exc).__name__}): {exc}")
 
     async with engine.connect() as conn:
         after = set(await conn.run_sync(lambda sync: inspect(sync).get_table_names()))
