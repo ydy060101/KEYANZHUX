@@ -112,3 +112,24 @@ async def session() -> AsyncIterator[Any]:
     factory = get_session_factory()
     async with factory() as s:
         yield s
+
+
+@pytest.fixture(scope="module")
+def paper_chunks() -> list[Any]:
+    """The Attention-v1 fixture, parsed and chunked once per test module.
+
+    Used by both retrieval test modules; parsing a 15-page paper per test would
+    dominate the suite's runtime for no benefit, and the chunks are identical
+    every time (H06).
+    """
+    from pathlib import Path
+
+    from app.ingest.parser import parse_pdf
+    from app.rag.chunk import Chunker
+
+    path = Path(__file__).resolve().parent.parent / "fixtures" / "pdf" / "1706.03762v1.pdf"
+    if not path.is_file():
+        pytest.skip("1706.03762v1.pdf is not staged")
+    result = parse_pdf(path, "doc-transformer")
+    chunker = Chunker()
+    return chunker.feed(result.model.blocks) + chunker.flush()

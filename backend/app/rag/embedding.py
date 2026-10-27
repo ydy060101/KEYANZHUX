@@ -31,6 +31,25 @@ def _apply_hf_env() -> None:
         os.environ.setdefault("HF_ENDPOINT", endpoint)
 
 
+def _cached(model_name: str) -> bool:
+    """Whether `model_name` already has a snapshot in the configured cache.
+
+    A model that is already on disk must not be looked up on the network: the
+    hub check costs a round trip on every process start, and on a machine where
+    the mirror is slow or the repo is served through Xet (which this one cannot
+    reach) it turns a 4-second load into a multi-minute stall followed by a
+    re-download of weights that are already present. Loading with
+    `local_files_only` when the cache has the ref is the deterministic choice
+    (H06), and it still downloads normally on a machine that has never seen the
+    model.
+    """
+    cache = get_settings().model_dir
+    org, _, name = model_name.partition("/")
+    if not name:
+        return False
+    return (cache / f"models--{org}--{name}" / "refs" / "main").is_file()
+
+
 class Embedder:
     """Lazily loaded sentence-transformer with a deterministic fallback."""
 
@@ -72,7 +91,7 @@ class Embedder:
 
         from sentence_transformers import SentenceTransformer
 
-        kwargs: dict[str, Any] = {}
+        kwargs: dict[str, Any] = {"local_files_only": _cached(self._model_name)}
         if self._model_dir:
             kwargs["cache_folder"] = self._model_dir
         logger.info("loading embedding model %s", self._model_name)
@@ -136,7 +155,9 @@ class Embedder:
                 _apply_hf_env()
                 from sentence_transformers import CrossEncoder
 
-                kwargs: dict[str, Any] = {}
+                kwargs: dict[str, Any] = {
+                    "local_files_only": _cached(get_settings().rerank_model)
+                }
                 if self._model_dir:
                     kwargs["cache_folder"] = self._model_dir
                 self._reranker = await asyncio.to_thread(
