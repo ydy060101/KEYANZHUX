@@ -214,6 +214,10 @@ components:
             tables: { type: integer }
             formulas: { type: integer }
             references: { type: integer }
+            citations: { type: integer }
+            cited_references: { type: integer }
+            uncited_references: { type: integer }
+            dangling_citations: { type: integer }
 
     DocumentPage:
       type: object

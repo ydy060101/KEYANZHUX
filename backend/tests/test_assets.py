@@ -80,6 +80,16 @@ def test_formulas_are_found_and_do_not_duplicate_ids(model: Any) -> None:
     assert len(ids) == len(set(ids)), "asset ids must be unique"
 
 
+def test_sub_figure_captions_keep_their_own_ids() -> None:
+    """GPT-3 prints Figure 3.1, 3.2, ...; each must survive as its own asset."""
+    gpt3 = FIXTURES / "2005.14165_gpt3.pdf"
+    parsed = parse_pdf(gpt3, "doc-assets-gpt3").model
+    ids = [asset.id for asset in parsed.assets]
+    assert len(ids) == len(set(ids)), "a sub-figure collided with its parent"
+    figures = {asset.id for asset in parsed.assets if asset.kind == "figure"}
+    assert {"f3.1", "f3.2"} <= figures
+
+
 def test_table_header_is_not_mistaken_for_a_formula(model: Any) -> None:
     formulas = [asset for asset in model.assets if asset.kind == "formula"]
     table_ids = {asset.id for asset in model.assets if asset.kind == "table"}

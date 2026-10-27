@@ -30,8 +30,8 @@ command passes and its commit exists.
 | Card | Status | Notes |
 |---|---|---|
 | T2.1 Heading tree | complete | Bookmarks first, font-size+numbering fallback with sequence validation, max 3 levels. Transformer 22 headings (3 levels), BERT 25 (rules only), GPT-3 32 — all matching the printed contents. 12 pytest. |
-| T2.2 Figures, tables, formulas | not started | |
-| T2.3 References and citation markers | not started | |
+| T2.2 Figures, tables, formulas | complete | Caption pairing, table-body extension, symbol-density formula detection; every asset keeps a 2× page crop. v1: 5 figures, 4 tables, 13 formulas. Sub-figure labels (3.2) keep their own ids. 11 pytest. |
+| T2.3 References and citation markers | complete | Link annotations first, regex per-page fallback; markers split across links are rejoined. v1 36/36 cited, v7 40/40, GPT-3 144/144, BERT 52/56 — zero dangling. Reference parsing handles numbered, alpha-keyed and unnumbered (margin-split) bibliographies. Coverage in `stats` (CR-004). 18 pytest. |
 | T2.4 Scanned OCR | not started | |
 | T2.5 Long book pipeline | not started | |
 | T2.6 Reader (structure and render) | not started | |

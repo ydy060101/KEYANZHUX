@@ -172,6 +172,54 @@ def drawing_boxes(page: Page) -> list[tuple[float, float, float, float]]:
 
 
 @dataclass
+class Link:
+    """One link annotation: a clickable rectangle and where it points."""
+
+    bbox: tuple[float, float, float, float]
+    # 1-based target page for internal links, None for external ones.
+    page: int | None
+    # Target point in PyMuPDF's bottom-left origin, flipped to top-left below.
+    target: tuple[float, float] | None
+    uri: str | None
+    name: str
+
+
+def links(page: Page) -> list[Link]:
+    """Link annotations on a page.
+
+    A citation in a LaTeX PDF is usually a GoTo link whose rectangle covers the
+    "[3]" marker and whose target is the reference's page, so this is a more
+    reliable citation source than any text pattern.
+    """
+    _, height = page_size(page)
+    out: list[Link] = []
+    for link in page.get_links():
+        rect = link.get("from")
+        if rect is None:
+            continue
+        target_page = link.get("page")
+        point = link.get("to")
+        out.append(
+            Link(
+                bbox=(float(rect.x0), float(rect.y0), float(rect.x1), float(rect.y1)),
+                page=int(target_page) + 1 if isinstance(target_page, int) and target_page >= 0 else None,
+                # PyMuPDF reports the destination in bottom-left coordinates;
+                # everything else in this project is top-left, so flip here.
+                target=(float(point.x), height - float(point.y)) if point is not None else None,
+                uri=str(link["uri"]) if link.get("uri") else None,
+                name=str(link.get("nameddest") or ""),
+            )
+        )
+    return out
+
+
+def text_in_bbox(page: Page, bbox: tuple[float, float, float, float]) -> str:
+    """The page text that lies inside a rectangle."""
+    clip = pymupdf.Rect(bbox[0], bbox[1], bbox[2], bbox[3])
+    return str(page.get_text("text", clip=clip)).strip()
+
+
+@dataclass
 class Bookmark:
     """One entry of the PDF's own outline, with the page it points at (1-based)."""
 

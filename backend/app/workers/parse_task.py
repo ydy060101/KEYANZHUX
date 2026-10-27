@@ -7,7 +7,6 @@ long-book windowing on top of the same handler.
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from typing import Any
 
 from sqlalchemy import delete
@@ -15,9 +14,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import get_settings
 from ..db import get_session_factory
+from ..ingest import storage
+from ..ingest.assets import extract_assets
+from ..ingest.citations import build_citations
 from ..ingest.metadata import extract_meta_llm
 from ..ingest.parser import detect_arxiv_id, detect_source_kind, extract_blocks, probe_pages
 from ..ingest.pdfio import close_document, open_document, page_count
+from ..ingest.references import extract_references
 from ..llm.gateway import get_gateway
 from ..models.orm import AssetRow, CitationRow, Document, ReferenceRow
 from ..models.orm import Block as BlockRow
@@ -36,7 +39,7 @@ async def parse_document(job_id: str, payload: dict[str, Any]) -> dict[str, Any]
         doc = await session.get(Document, doc_id)
         if doc is None:
             raise ValueError(f"文档不存在：{doc_id}")
-        path = Path(doc.file_path)
+        path = storage.resolve(doc.file_path)
         stored_sha = doc.sha256
         await JobService(session).progress(job_id, stage="probe", progress=0.05)
 
@@ -55,12 +58,22 @@ async def parse_document(job_id: str, payload: dict[str, Any]) -> dict[str, Any]
         total_pages = page_count(doc_handle)
         first_text = blocks[0].text if blocks else ""
         detected_arxiv, detected_version = detect_arxiv_id(path.name, first_text)
+
+        async with factory() as session:
+            await JobService(session).progress(job_id, stage="references", progress=0.6)
+        references = extract_references(blocks, doc_id)
+        citations, coverage = build_citations(doc_handle, blocks, references)
+
+        async with factory() as session:
+            await JobService(session).progress(job_id, stage="assets", progress=0.7)
+        assets = extract_assets(doc_handle, blocks, doc_id)
     except Exception:
         async with factory() as session:
             doc = await session.get(Document, doc_id)
             if doc is not None:
                 doc.status = "failed"
                 doc.parse_error = "解析失败"
+                await session.commit()
         raise
     finally:
         close_document(doc_handle)
@@ -73,17 +86,35 @@ async def parse_document(job_id: str, payload: dict[str, Any]) -> dict[str, Any]
         meta=meta,
         outline=outline,
         blocks=blocks,
+        references=references,
+        citations=citations,
+        assets=assets,
         arxiv_id=detected_arxiv,
         version=detected_version,
     )
 
     async with factory() as session:
-        await JobService(session).progress(job_id, stage="persist", progress=0.8)
+        await JobService(session).progress(job_id, stage="persist", progress=0.85)
         await persist_parse(session, model)
         await _store_fingerprint(session, model)
 
-    logger.info("parsed doc_id=%s blocks=%d pages=%d", doc_id, len(blocks), total_pages)
-    return {"doc_id": doc_id, "blocks": len(blocks), "pages": total_pages}
+    logger.info(
+        "parsed doc_id=%s blocks=%d pages=%d citations=%d cited=%d/%d",
+        doc_id,
+        len(blocks),
+        total_pages,
+        len(citations),
+        coverage.cited,
+        coverage.references,
+    )
+    return {
+        "doc_id": doc_id,
+        "blocks": len(blocks),
+        "pages": total_pages,
+        "references": len(references),
+        "citations": len(citations),
+        "coverage": coverage.as_dict(),
+    }
 
 
 async def _store_fingerprint(session: AsyncSession, model: DocumentModel) -> None:

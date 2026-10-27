@@ -60,19 +60,60 @@ def _document_payload(doc: Document, stats: dict[str, int] | None = None) -> dic
 
 
 async def _stats(session: AsyncSession, doc_id: str) -> dict[str, int]:
+    """Counts for the library card.
+
+    Figures, tables and formulas are counted from `assets`, not from block
+    types: the parser types their captions as `caption` and keeps the graphic
+    itself as an asset, so counting blocks would always report zero.
+    """
     rows = await session.execute(
         select(BlockRow.type, func.count()).where(BlockRow.doc_id == doc_id).group_by(BlockRow.type)
     )
     counts: dict[BlockType, int] = {row[0]: row[1] for row in rows}
+    assets = await session.execute(
+        select(AssetRow.kind, func.count()).where(AssetRow.doc_id == doc_id).group_by(AssetRow.kind)
+    )
+    asset_counts = {kind: count for kind, count in assets}
     references = await session.scalar(
         select(func.count()).select_from(ReferenceRow).where(ReferenceRow.doc_id == doc_id)
     )
+    citations = await _citation_coverage(session, doc_id)
     return {
         "blocks": sum(counts.values()),
-        "figures": counts.get("figure", 0),
-        "tables": counts.get("table", 0),
-        "formulas": counts.get("formula", 0),
+        "figures": asset_counts.get("figure", 0),
+        "tables": asset_counts.get("table", 0),
+        "formulas": asset_counts.get("formula", 0),
         "references": references or 0,
+        **citations,
+    }
+
+
+async def _citation_coverage(session: AsyncSession, doc_id: str) -> dict[str, int]:
+    """How much of the bibliography the body cites (T2.3).
+
+    Derived from the stored rows rather than a counter column: the numbers
+    then cannot drift from the citations they describe, and re-parsing a
+    document updates them for free.
+    """
+    rows = await session.scalars(select(CitationRow.ref_ids).where(CitationRow.doc_id == doc_id))
+    cited: set[str] = set()
+    dangling: set[str] = set()
+    for ref_ids in rows:
+        for ref in ref_ids or []:
+            cited.add(ref.split(":", 1)[-1])
+    known = set(
+        await session.scalars(select(ReferenceRow.id).where(ReferenceRow.doc_id == doc_id))
+    )
+    known_ids = {ref.split(":", 1)[-1] for ref in known}
+    dangling = cited - known_ids
+    return {
+        "citations": await session.scalar(
+            select(func.count()).select_from(CitationRow).where(CitationRow.doc_id == doc_id)
+        )
+        or 0,
+        "cited_references": len(cited & known_ids),
+        "uncited_references": len(known_ids - cited),
+        "dangling_citations": len(dangling),
     }
 
 
@@ -120,6 +161,11 @@ async def upload_documents(
         existing = await session.scalar(select(Document).where(Document.sha256 == sha256))
         if existing is not None:
             # H12: the same bytes are the same document, whatever the filename.
+            # Re-uploading also repairs a row whose file went missing, which is
+            # the only way the user can recover from a moved data directory.
+            repaired = storage.ensure_pdf(existing.file_path, data)
+            if str(repaired) != existing.file_path:
+                existing.file_path = str(repaired)
             job = await queue.JobService(session).create(
                 kind="parse", payload={"doc_id": existing.id}, user=user
             )
@@ -360,7 +406,11 @@ def _reference_payload(row: ReferenceRow) -> dict[str, Any]:
 
 @router.get("/documents/{doc_id}/citations")
 async def get_citations(doc_id: str, session: SessionDep) -> list[dict[str, Any]]:
-    """In-text markers mapped to reference ids, each with its anchor (T2.3)."""
+    """In-text markers mapped to reference ids, each with its anchor (T2.3).
+
+    Coverage travels in the document's `stats` instead of here, so the shape
+    stays the array the contract specifies.
+    """
     await _load(session, doc_id)
     rows = await session.scalars(
         select(CitationRow).where(CitationRow.doc_id == doc_id).order_by(CitationRow.id)
@@ -423,7 +473,7 @@ async def stream_file(
     range_header: Annotated[str | None, Header(alias="Range")] = None,
 ) -> Response:
     doc = await _load(session, doc_id)
-    path = Path(doc.file_path)
+    path = storage.resolve(doc.file_path)
     # A PDF is streamed in 64 KB pieces, so the event loop only ever waits on
     # short reads rather than one blocking full-file read.
     if not await asyncio.to_thread(path.is_file):

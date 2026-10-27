@@ -21,7 +21,9 @@ from . import pdfio, storage
 
 logger = logging.getLogger(__name__)
 
-_CAPTION = re.compile(r"^(figure|table|fig\.)\s*(\d+)\s*[:.]\s*(.*)$", re.IGNORECASE | re.DOTALL)
+_CAPTION = re.compile(
+    r"^(figure|table|fig\.)\s*(\d+(?:\.\d+)?)\s*[:.]\s*(.*)$", re.IGNORECASE | re.DOTALL
+)
 # A formula line: mostly symbols, digits and single letters, not prose.
 _FORMULA_HINT = re.compile(r"[=∑∏∫√≈≤≥±×÷∂∇αβγδεθλμσϕω]")
 _WORD = re.compile(r"[A-Za-z]{3,}")
@@ -33,10 +35,15 @@ _GRAPHIC_GAP = 0.35
 @dataclass
 class Caption:
     kind: str
-    number: int
+    # As printed: "3" for Figure 3, "3.2" for Figure 3.2.
+    label: str
     text: str
     page: int
     block: Block
+
+    @property
+    def number(self) -> int:
+        return int(self.label.split(".")[0])
 
 
 def _caption_of(block: Block) -> Caption | None:
@@ -46,7 +53,7 @@ def _caption_of(block: Block) -> Caption | None:
     kind = "figure" if match.group(1).lower().startswith("fig") else "table"
     return Caption(
         kind=kind,
-        number=int(match.group(2)),
+        label=match.group(2),
         text=match.group(3).strip(),
         page=block.page,
         block=block,
@@ -179,7 +186,9 @@ def _write_asset(
     caption: Caption,
     region: tuple[float, float, float, float],
 ) -> Asset:
-    asset_id = f"{caption.kind[:1]}{caption.number}"
+    # The printed label keeps sub-figures apart: a paper with Figure 3 and
+    # Figure 3.2 has two assets, not two claims on the id "f3".
+    asset_id = f"{caption.kind[:1]}{caption.label}"
     path = out_dir / f"{asset_id}.png"
     path.write_bytes(pdfio.crop_png(page, region))
     return Asset(

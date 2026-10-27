@@ -15,7 +15,6 @@ from pathlib import Path
 from ..models.schemas import (
     Block,
     BlockType,
-    Citation,
     DocMeta,
     DocumentModel,
     OutlineItem,
@@ -24,23 +23,14 @@ from ..models.schemas import (
 )
 from . import pdfio
 from .assets import extract_assets
+from .citations import Coverage, build_citations
 from .outline import build_outline
+from .references import extract_references as _extract_references
 
 logger = logging.getLogger(__name__)
 
 ARXIV_RE = re.compile(r"(\d{4}\.\d{4,5})(v\d+)?")
-CITE_RE = re.compile(r"\[(\d+(?:\s*[,\-–]\s*\d+)*)\]")
 _HEADING_RE = re.compile(r"^(\d+(?:\.\d+){0,2})\.?\s+(\S.{0,120})$")
-# The entry after the bracket starts with an author's name, which may begin
-# with a non-ASCII capital (Łukasz, Özlem, Åke), so the lookahead is Unicode.
-_REF_START = re.compile(r"^\[?(\d{1,3})\]?[\.\s]?\s*(?=[^\W\d_])", re.UNICODE)
-# "9(8):1735-1780, 1997." continues the entry above; it is a volume number,
-# not a new reference. A real entry starts with the author's name.
-_JOURNAL_LINE = re.compile(r"^\d+\s*\(?\d*\)?\s*[:.]")
-# A reference list ends at the first appendix-like heading.
-_REF_STOP = re.compile(
-    r"^(appendix|attention visualizations|supplementary|acknowledg)", re.IGNORECASE
-)
 
 
 @dataclass
@@ -86,6 +76,7 @@ def font_profile(doc: pdfio.Document, page_index: int = 0) -> FontProfile:
 class ParseResult:
     model: DocumentModel
     page_stats: list[PageStats] = field(default_factory=list)
+    citation_coverage: Coverage = field(default_factory=Coverage)
 
 
 def detect_source_kind(pages: list[PageStats], threshold: int) -> SourceKind:
@@ -274,119 +265,9 @@ def extract_meta(doc: pdfio.Document, blocks: list[Block], doc_id: str) -> DocMe
     return rule_based_meta(doc, blocks, doc_id)
 
 
-def extract_references(blocks: list[Block], doc_id: str) -> tuple[list[Reference], list[Citation]]:
-    """Collect numbered reference entries and every in-text citation marker.
-
-    Reference entries wrap across PDF blocks, so a block that does not start
-    with a number is appended to the previous entry rather than becoming one.
-    """
-    references: list[Reference] = []
-    citations: list[Citation] = []
-    refs_started = False
-    unnumbered: list[Block] = []
-
-    for block in blocks:
-        text = block.text.strip()
-        lowered = text.lower()
-
-        if not refs_started:
-            if lowered.startswith("references") and len(text) < 40:
-                refs_started = True
-                continue
-        else:
-            if _REF_STOP.match(text) and len(text) < 80:
-                refs_started = False
-            else:
-                start = _REF_START.match(text)
-                if start and _JOURNAL_LINE.match(text):
-                    start = None  # a wrapped volume/page line, not a new entry
-                if start:
-                    index = int(start.group(1))
-                    # A second list restarting at 1 (appendix, or a duplicated
-                    # bibliography) would collide with ids already issued; the
-                    # first list is the paper's own reference list.
-                    if index == 1 and references:
-                        refs_started = False
-                        continue
-                    references.append(
-                        Reference(
-                            id=f"r{index}",
-                            index=index,
-                            raw=text,
-                            block_id=block.id,
-                            bbox=block.bbox,
-                        )
-                    )
-                elif references:
-                    previous = references[-1]
-                    previous.raw = f"{previous.raw} {text}".strip()
-                else:
-                    # No numbered entry has appeared yet: the list may simply
-                    # be unnumbered (BERT), so collect it for the fallback.
-                    unnumbered.append(block)
-
-        for marker in CITE_RE.finditer(text):
-            numbers = _expand_marker(marker.group(1))
-            citations.append(
-                Citation(
-                    id=f"c{len(citations) + 1}",
-                    marker=marker.group(0),
-                    ref_ids=[f"r{n}" for n in numbers],
-                    block_id=block.id,
-                    bbox=block.bbox,
-                    method="regex",
-                )
-            )
-
-    if not references and unnumbered:
-        references = _split_unnumbered(unnumbered)
-    return references, citations
-
-
-_AUTHOR_START = re.compile(r"^[A-Z][\w'’-]*(?:,|\s+[A-Z])")
-
-
-def _split_unnumbered(blocks: list[Block]) -> list[Reference]:
-    """Split an unnumbered reference list into entries.
-
-    BERT's bibliography has no numbers. Each entry starts a new author list
-    ("AlanAkbik,DuncanBlythe..."), so a block that starts with a capitalised
-    name begins an entry and every following block continues it. This is a
-    best-effort structure: the raw text is kept verbatim either way.
-    """
-    entries: list[Reference] = []
-    for block in blocks:
-        text = block.text.strip()
-        if not text:
-            continue
-        starts_entry = bool(_AUTHOR_START.match(text))
-        if not entries or starts_entry:
-            entries.append(
-                Reference(
-                    id=f"r{len(entries) + 1}",
-                    index=len(entries) + 1,
-                    raw=text,
-                    block_id=block.id,
-                    bbox=block.bbox,
-                )
-            )
-        else:
-            entries[-1].raw = f"{entries[-1].raw} {text}".strip()
-    return entries
-
-
-def _expand_marker(spec: str) -> list[int]:
-    numbers: list[int] = []
-    for part in spec.split(","):
-        part = part.strip()
-        if re.match(r"^\d+\s*[-–]\s*\d+$", part):
-            start, end = re.split(r"\s*[-–]\s*", part)
-            low, high = int(start or 0), int(end or 0)
-            if 0 < high - low <= 50:
-                numbers.extend(range(low, high + 1))
-        elif part.isdigit():
-            numbers.append(int(part))
-    return numbers
+def extract_references(blocks: list[Block], doc_id: str) -> list[Reference]:
+    """The bibliography entries, in reading order (see `references.py`)."""
+    return _extract_references(blocks, doc_id)
 
 
 def detect_arxiv_id(filename: str, first_page_text: str) -> tuple[str | None, str | None]:
@@ -405,7 +286,8 @@ def parse_pdf(path: Path, doc_id: str, *, threshold: int = 30, page_limit: int |
         meta = extract_meta(doc, blocks, doc_id)
         first_text = blocks[0].text if blocks else ""
         arxiv_id, version = detect_arxiv_id(path.name, first_text)
-        references, citations = extract_references(blocks, doc_id)
+        references = extract_references(blocks, doc_id)
+        citations, coverage = build_citations(doc, blocks, references, page_limit=page_limit)
         assets = extract_assets(doc, blocks, doc_id)
 
         model = DocumentModel(
@@ -422,6 +304,6 @@ def parse_pdf(path: Path, doc_id: str, *, threshold: int = 30, page_limit: int |
             citations=citations,
             assets=assets,
         )
-        return ParseResult(model=model, page_stats=pages)
+        return ParseResult(model=model, page_stats=pages, citation_coverage=coverage)
     finally:
         pdfio.close_document(doc)

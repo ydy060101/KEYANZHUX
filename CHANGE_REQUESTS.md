@@ -45,3 +45,19 @@ contract stays unchanged until a human approves it (AGENTS.md §2.3).
   false the summary says the comparison is not yet possible instead of claiming
   no changes.
 - **Status:** Applied in T1.6. Awaiting human approval.
+
+## CR-004 — `Document.stats` needs citation coverage counters
+
+- **Request:** Add `citations`, `cited_references`, `uncited_references` and
+  `dangling_citations` to the `stats` object of `Document` in `openapi.yaml`.
+- **Reason:** The T2.3 card requires "覆盖率统计写入文档状态", and the contract's
+  `stats` currently stops at `references`. Without the counters a client can
+  tell that a paper has 40 references but not whether the body cites them —
+  which is exactly the case where the citation extraction silently failed.
+  `GET /documents/{id}/citations` is specified as a bare array, so the numbers
+  have nowhere else to go without changing that shape.
+- **Impact:** Additive and optional; existing clients ignore the new keys. The
+  values are computed from the `citations`/`references` rows on every read, so
+  they cannot drift from the data they describe.
+- **Proposal:** Extend `stats` with the four integer counters.
+- **Status:** Applied in T2.3. Awaiting human approval.

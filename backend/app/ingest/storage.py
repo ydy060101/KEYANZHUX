@@ -66,12 +66,42 @@ def write_pdf(sha256: str, data: bytes) -> Path:
     return target
 
 
+def resolve(file_path: str) -> Path:
+    """Turn a stored path into an absolute one.
+
+    Rows written before the data directory was anchored to the repository hold
+    a path relative to whatever directory the process happened to run in, so a
+    relative path here is resolved against the repository root rather than the
+    current directory.
+    """
+    path = Path(file_path)
+    if path.is_absolute():
+        return path
+    from ..config import REPO_ROOT
+
+    return REPO_ROOT / path
+
+
+def ensure_pdf(file_path: str, data: bytes) -> Path:
+    """The stored PDF, rewritten when the row points at a file that is gone.
+
+    A row can outlive its file — the data directory moved, or the upload was
+    recorded by a process with a different working directory. Re-uploading the
+    same bytes is the moment to repair that instead of failing the parse.
+    """
+    path = resolve(file_path)
+    if not path.is_file():
+        target = write_pdf(sha256_bytes(data), data)
+        return target
+    return path
+
+
 def remove_document(doc_id: str, file_path: str | None) -> None:
     """Delete parsed artefacts and the stored PDF; missing paths are fine."""
     for path in (parsed_dir(doc_id), translation_dir(doc_id)):
         if path.exists():
             shutil.rmtree(path, ignore_errors=True)
     if file_path:
-        stored = Path(file_path)
+        stored = resolve(file_path)
         if stored.is_file():
             stored.unlink(missing_ok=True)
