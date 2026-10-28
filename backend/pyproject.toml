@@ -50,6 +50,7 @@ dev = [
     "ruff>=0.8,<1",
     "mypy>=1.13,<2",
     "pre-commit>=4,<5",
+    "pyinstaller>=6.11,<7",
     "types-requests",
     # Peak-RSS sampling for the H11 long-book check (T2.5); psutil itself is a
     # runtime dependency because the figure sandbox also samples the child RSS.

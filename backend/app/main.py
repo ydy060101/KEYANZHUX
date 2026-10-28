@@ -5,10 +5,13 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
 from .errors import (
@@ -79,7 +82,46 @@ def create_app() -> FastAPI:
     app.include_router(graphs_api.router, prefix=settings.api_prefix)
     app.include_router(writing_api.router, prefix=settings.api_prefix)
 
+    _mount_frontend(app)
     return app
+
+
+def _dist_dir() -> Path:
+    """The production frontend built by `npm run build`, if it exists.
+
+    `backend/app/main.py` → repository root is two parents up. Keeping the
+    lookup relative to this file means the packaged launcher can run the API
+    from any working directory.
+    """
+    return Path(__file__).resolve().parents[2] / "frontend" / "dist"
+
+
+def _mount_frontend(app: FastAPI) -> None:
+    """Serve the built SPA next to the API (portable launcher, T8.4).
+
+    Development uses Vite's proxy and never reaches these routes. In the
+    packaged form the API is the only server, so `/` must return
+    `index.html`, hashed assets come from `/assets`, and unknown *page* paths
+    fall back to the SPA. `/api/*` is deliberately excluded: an unknown API
+    path must stay a 404 JSON response instead of returning HTML to a client
+    that will try to parse it.
+    """
+    dist = _dist_dir()
+    assets = dist / "assets"
+    if assets.is_dir():
+        app.mount("/assets", StaticFiles(directory=assets), name="assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def spa(full_path: str) -> FileResponse:
+        if full_path.startswith("api/") or full_path == "openapi.json":
+            raise HTTPException(status_code=404, detail="Not Found")
+        candidate = (dist / full_path).resolve()
+        if full_path and dist.resolve() in candidate.parents and candidate.is_file():
+            return FileResponse(candidate)
+        index = dist / "index.html"
+        if index.is_file():
+            return FileResponse(index)
+        raise HTTPException(status_code=404, detail="Not Found")
 
 
 app = create_app()

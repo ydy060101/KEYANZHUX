@@ -24,6 +24,8 @@ data/glossary/
 data/figures/
 data/datasets/
 data/uploads/
+data/logs/
+data/launcher.lock
 .runtime/
 *.log
 
@@ -33,3 +35,32 @@ Thumbs.db
 
 # Test artefacts
 frontend/e2e/screenshots/
+
+# Packaged launcher (built by `.\tools.ps1 exe`)
+release/
+.build/
+
+# Local Python environments and caches
+.venv/
+venv/
+backend/.venv/
+backend/venv/
+.mypy_cache/
+**/.mypy_cache/
+**/__pycache__/
+*.pyc
+
+# Local databases and generated artifacts
+*.db
+*.sqlite
+*.sqlite3
+
+# Local environment secrets
+.env
+.env.*
+!.env.example
+
+# Frontend dependencies and build output
+node_modules/
+dist/
+build/

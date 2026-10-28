@@ -51,6 +51,7 @@ New dependencies must be recorded here with their purpose and why the existing s
 | ruff | 0.17.2 | Lint and format |
 | mypy | 1.19.1 | Static types (strict) |
 | pre-commit | 4.4.0 | Pre-commit checks |
+| pyinstaller | 6.22.3 | Builds the portable launcher `release/ResearchAssistant.exe` (`.\tools.ps1 exe`). The launcher is a stdlib-only supervisor, so the bundle stays small; the Python backend itself is not frozen because torch/Paddle/models make that impractical. |
 | types-psutil | 7.2.2.20260906 | Type stubs for psutil, used by the H11 long-book check (`tools/check_long_book.py`, `tests/test_long_book.py`) and the figure sandbox. |
 
 ## Frontend

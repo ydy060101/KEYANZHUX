@@ -3,7 +3,7 @@
 # entry point (recorded in QUESTIONS.md).
 param(
     [Parameter(Position = 0)]
-    [ValidateSet("dev", "test", "lint", "typecheck", "build", "accept", "db-up", "db-down", "db-reset", "eval-qa", "gen-api")]
+    [ValidateSet("dev", "test", "lint", "typecheck", "build", "accept", "db-up", "db-down", "db-reset", "eval-qa", "gen-api", "exe")]
     [string]$Command = "accept"
 )
 
@@ -132,4 +132,24 @@ asyncio.run(main())
     }
 
     "eval-qa" { Invoke-Step "eval" { Push-Location (Join-Path $Root "backend"); try { & $Py -m app.eval_qa } finally { Pop-Location } } }
+
+    "exe" {
+        # Build the SPA first: the packaged launcher serves `frontend/dist` from
+        # the API, so a stale build would ship an old UI.
+        & $PSCommandPath build
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+        $work = Join-Path $Root ".build"
+        $release = Join-Path $Root "release"
+        New-Item -ItemType Directory -Force $work | Out-Null
+        New-Item -ItemType Directory -Force $release | Out-Null
+        Invoke-Step "pyinstaller" {
+            & $Py -m PyInstaller --noconfirm --clean --onefile --console `
+                --name ResearchAssistant `
+                --distpath $release --workpath $work --specpath $work `
+                (Join-Path $Root "tools\launcher.py")
+        }
+        Write-Host "`nBuilt: $release\ResearchAssistant.exe" -ForegroundColor Green
+        Write-Host "Keep backend/, frontend/dist/ and the portable runtime next to it." -ForegroundColor Cyan
+    }
 }
