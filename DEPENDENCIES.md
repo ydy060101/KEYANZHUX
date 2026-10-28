@@ -29,7 +29,8 @@ New dependencies must be recorded here with their purpose and why the existing s
 | python-multipart | 0.0.32 | Multipart uploads | FastAPI requires it for `UploadFile`. |
 | pymupdf | 1.28.2 | PDF text, bbox, links, rendering | Fixed by the spec. |
 | numpy | 2.4.0 | Vector math | Required by embedding and MinHash. |
-| pandas | 3.0.0 | CSV parsing and chart statistics | Fixed by the spec for the data workshop. |
+| pandas | 2.3.3 | CSV parsing and chart statistics | Fixed by the spec for the data workshop. |
+| matplotlib | 3.11.2 | Server-side PNG rendering for `POST /data/{id}/chart` | `ChartResult.image_url` needs a static image; the browser ECharts view draws the interactive chart from the same stats but cannot fill that field, and matplotlib is already the whitelisted sandbox library. |
 | python-dotenv | 1.2.4 | `.env` loading | pydantic-settings reads `.env` through it. |
 | sentence-transformers | 5.7.0 | Local bge-m3 embeddings and bge-reranker-v2-m3 | Fixed by the spec; no hosted endpoint serves these models. Pulls torch 2.14.1+cpu. |
 | paddlepaddle | 3.2.0 | CPU inference runtime for PaddleOCR | Fixed by the spec (PaddleOCR is the required OCR engine) and it has no other runtime. |

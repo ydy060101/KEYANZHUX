@@ -21,6 +21,7 @@ data/pdf/
 data/parsed/
 data/translations/
 data/figures/
+data/datasets/
 data/uploads/
 .runtime/
 *.log

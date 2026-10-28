@@ -23,6 +23,8 @@ dependencies = [
     "pymupdf>=1.24,<2",
     "numpy>=1.26,<3",
     "pandas>=2.2,<3",
+    # Server-side PNG for POST /data/{id}/chart; the browser charts are ECharts.
+    "matplotlib>=3.8,<4",
     "python-dotenv>=1.0,<2",
     "sentence-transformers>=3,<6",
 ]
@@ -78,7 +80,18 @@ plugins = ["pydantic.mypy"]
 exclude = ["migrations"]
 
 [[tool.mypy.overrides]]
-module = ["fitz", "pymupdf", "pgvector.*", "arq.*", "redis.*", "sentence_transformers.*"]
+module = [
+    "fitz",
+    "pymupdf",
+    "pgvector.*",
+    "arq.*",
+    "redis.*",
+    "sentence_transformers.*",
+    # pandas/matplotlib ship no complete stubs; their calls are confined to the
+    # dataset and chart modules, whose public shapes are typed here.
+    "pandas.*",
+    "matplotlib.*",
+]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

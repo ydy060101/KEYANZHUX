@@ -334,7 +334,7 @@ class Dataset(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     filename: Mapped[str] = mapped_column(Text)
     path: Mapped[str] = mapped_column(Text)
-    columns: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    columns: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list)
     row_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 

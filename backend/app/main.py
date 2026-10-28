@@ -50,6 +50,7 @@ def create_app() -> FastAPI:
     async def healthz() -> dict[str, str]:
         return {"status": "ok"}
 
+    from .api import data as data_api
     from .api import discover as discover_api
     from .api import documents as documents_api
     from .api import graphs as graphs_api
@@ -62,6 +63,7 @@ def create_app() -> FastAPI:
     register_all()
     app.include_router(jobs_api.router, prefix=settings.api_prefix)
     app.include_router(documents_api.router, prefix=settings.api_prefix)
+    app.include_router(data_api.router, prefix=settings.api_prefix)
     app.include_router(qa_api.router, prefix=settings.api_prefix)
     app.include_router(translate_api.router, prefix=settings.api_prefix)
     app.include_router(discover_api.router, prefix=settings.api_prefix)
