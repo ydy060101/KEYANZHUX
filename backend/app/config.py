@@ -69,6 +69,24 @@ class Settings(BaseSettings):
     retrieval_rerank_k: int = 8
     rrf_k: int = 60
 
+    # ---- Worth score (T5.2) ----------------------------------------------
+    # 01 §10's weights live here so the reader's threshold and the ranking can
+    # be tuned without touching code (the card's "权重走配置").
+    worth_min_score: float = 45.0
+    worth_per_citation: float = 18.0
+    worth_citation_cap: int = 3
+    worth_method_section: float = 12.0
+    worth_usage_context: float = 10.0
+    worth_baseline_table: float = 12.0
+    worth_merged_penalty: float = 12.0
+    worth_self_penalty: float = 5.0
+    worth_external_bonus: float = 8.0
+    worth_external_stars: int = 100
+    # A batch job downloads and parses one PDF per kept reference. The cap
+    # bounds a single run; re-running is safe and imports the remainder,
+    # because references already in the library are skipped by identity.
+    worth_import_limit: int = 20
+
     # ---- Dedup -----------------------------------------------------------
     dedup_l3_cosine: float = 0.95
     dedup_l3_cosine_possible: float = 0.85
