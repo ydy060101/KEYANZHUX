@@ -1,0 +1,230 @@
+{
+  "generated_at": "2026-10-28T04:16:33+00:00",
+  "command": "python -I tools/check_qa.py all",
+  "golden": {
+    "path": "backend/tests/golden_qa.json",
+    "entries": 20,
+    "cross": 10,
+    "unanswerable": 5
+  },
+  "models": {
+    "fast": "workbuddy/deepseek-v4.1-flash",
+    "strong": "workbuddy/deepseek-v4-pro",
+    "embed": "BAAI/bge-m3",
+    "rerank": "BAAI/bge-reranker-v2-m3"
+  },
+  "qa": {
+    "anchor_correct": 20,
+    "answerable": 20,
+    "anchor_rate": 1.0,
+    "refused": 5,
+    "unanswerable": 5,
+    "refusal_rate": 1.0,
+    "point_hits": 20,
+    "point_rate": 1.0,
+    "verdict": "PASS",
+    "questions": [
+      {
+        "id": "q01",
+        "status": "ok",
+        "expected_pages": "[7]",
+        "pages": "[7]",
+        "point_ok": true,
+        "top": "0.9437"
+      },
+      {
+        "id": "q02",
+        "status": "ok",
+        "expected_pages": "[7]",
+        "pages": "[7]",
+        "point_ok": true,
+        "top": "0.7514"
+      },
+      {
+        "id": "q03",
+        "status": "ok",
+        "expected_pages": "[4]",
+        "pages": "[4]",
+        "point_ok": true,
+        "top": "0.7204"
+      },
+      {
+        "id": "q04",
+        "status": "ok",
+        "expected_pages": "[7]",
+        "pages": "[7]",
+        "point_ok": true,
+        "top": "0.9874"
+      },
+      {
+        "id": "q05",
+        "status": "ok",
+        "expected_pages": "[2]",
+        "pages": "[2]",
+        "point_ok": true,
+        "top": "0.9992"
+      },
+      {
+        "id": "q06",
+        "status": "ok",
+        "expected_pages": "[5, 7]",
+        "pages": "[5]",
+        "point_ok": true,
+        "top": "0.8838"
+      },
+      {
+        "id": "q07",
+        "status": "ok",
+        "expected_pages": "[8]",
+        "pages": "[8, 1]",
+        "point_ok": true,
+        "top": "0.9954"
+      },
+      {
+        "id": "q08",
+        "status": "ok",
+        "expected_pages": "[7]",
+        "pages": "[7, 8]",
+        "point_ok": true,
+        "top": "0.9962"
+      },
+      {
+        "id": "q09",
+        "status": "ok",
+        "expected_pages": "[7]",
+        "pages": "[7]",
+        "point_ok": true,
+        "top": "0.7895"
+      },
+      {
+        "id": "q10",
+        "status": "ok",
+        "expected_pages": "[7]",
+        "pages": "[7]",
+        "point_ok": true,
+        "top": "0.9947"
+      },
+      {
+        "id": "q11",
+        "status": "ok",
+        "expected_pages": "[7]",
+        "pages": "[7, 7, 1]",
+        "point_ok": true,
+        "top": "0.9849"
+      },
+      {
+        "id": "q12",
+        "status": "ok",
+        "expected_pages": "[7]",
+        "pages": "[7]",
+        "point_ok": true,
+        "top": "0.9886"
+      },
+      {
+        "id": "q13",
+        "status": "ok",
+        "expected_pages": "[8]",
+        "pages": "[8, 9]",
+        "point_ok": true,
+        "top": "0.9717"
+      },
+      {
+        "id": "q14",
+        "status": "ok",
+        "expected_pages": "[8]",
+        "pages": "[8, 9]",
+        "point_ok": true,
+        "top": "0.9742"
+      },
+      {
+        "id": "q15",
+        "status": "ok",
+        "expected_pages": "[5]",
+        "pages": "[5]",
+        "point_ok": true,
+        "top": "0.9936"
+      },
+      {
+        "id": "q16",
+        "status": "ok",
+        "expected_pages": "[6]",
+        "pages": "[6]",
+        "point_ok": true,
+        "top": "0.9998"
+      },
+      {
+        "id": "q17",
+        "status": "ok",
+        "expected_pages": "[7]",
+        "pages": "[7]",
+        "point_ok": true,
+        "top": "0.9996"
+      },
+      {
+        "id": "q18",
+        "status": "ok",
+        "expected_pages": "[7]",
+        "pages": "[7]",
+        "point_ok": true,
+        "top": "0.9981"
+      },
+      {
+        "id": "q19",
+        "status": "ok",
+        "expected_pages": "[7]",
+        "pages": "[7]",
+        "point_ok": true,
+        "top": "0.8687"
+      },
+      {
+        "id": "q20",
+        "status": "ok",
+        "expected_pages": "[5]",
+        "pages": "[5]",
+        "point_ok": true,
+        "top": "0.8772"
+      }
+    ],
+    "refusals": [
+      {
+        "id": "u01",
+        "refused": true,
+        "top": "0.001",
+        "reason": "最高重排分 0.001 低于阈值 0.35"
+      },
+      {
+        "id": "u02",
+        "refused": true,
+        "top": "0.0358",
+        "reason": "最高重排分 0.036 低于阈值 0.35"
+      },
+      {
+        "id": "u03",
+        "refused": true,
+        "top": "0.0005",
+        "reason": "最高重排分 0.001 低于阈值 0.35"
+      },
+      {
+        "id": "u04",
+        "refused": true,
+        "top": "0.0031",
+        "reason": "最高重排分 0.003 低于阈值 0.35"
+      },
+      {
+        "id": "u05",
+        "refused": true,
+        "top": "0.0051",
+        "reason": "最高重排分 0.005 低于阈值 0.35"
+      }
+    ]
+  },
+  "compare": {
+    "grounded": 6,
+    "total": 12,
+    "grounded_rate": 0.5,
+    "provenance": 12,
+    "provenance_rate": 1.0,
+    "verdict": "PASS"
+  },
+  "verdict": "PASS"
+}
