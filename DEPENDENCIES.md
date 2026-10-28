@@ -70,10 +70,11 @@ New dependencies must be recorded here with their purpose and why the existing s
 | class-variance-authority / clsx / tailwind-merge | latest | Variant composition for design components | Needed to keep variants token-driven without magic values. |
 | pdfjs-dist | 4.8 | PDF rendering with text layer | Fixed by the spec. |
 | cytoscape | 3.30 | Citation graph canvas | Fixed by the spec. |
-| echarts / echarts-gl | 5.5 / 2.0.9 | Charts incl. 3-D radar | Fixed by the spec. |
+| echarts / echarts-gl | 5.6 / 2.1 | Charts incl. 3-D radar | Fixed by the spec. |
 | katex | 0.16 | Formula rendering | Fixed by the spec. |
 | mermaid | 11.x | Flow diagrams | Fixed by the spec. |
-| @monaco-editor/react | 4.6 | Script editor | Fixed by the spec. |
+| @monaco-editor/react | 4.7 | Script editor | Fixed by the spec. |
+| monaco-editor | 0.57.0 | Monaco runtime loaded from the installed package | @monaco-editor/react needs it as a peer; a local import keeps the writing studio offline instead of fetching the editor from a CDN. |
 | openapi-fetch | 0.13 | Typed API client | Generated types need a matching runtime client. |
 
 ## Frontend tooling

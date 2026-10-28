@@ -14,3 +14,6 @@ Object.defineProperty(window, "matchMedia", {
     dispatchEvent: () => false,
   }),
 });
+
+// jsdom does not implement scrollIntoView; reference cards use it when selected.
+Element.prototype.scrollIntoView = () => undefined;

@@ -10,6 +10,12 @@ export default defineConfig({
   resolve: {
     alias: { "@": path.resolve(__dirname, "./src") },
   },
+  optimizeDeps: {
+    // Pre-bundle the heavy writing-studio libraries: without this Vite
+    // discovers them on the first tab visit and reloads the page, which loses
+    // the generated draft and breaks an end-to-end run.
+    include: ["mermaid", "@monaco-editor/react", "monaco-editor", "echarts"],
+  },
   server: {
     port: 5173,
     proxy: {

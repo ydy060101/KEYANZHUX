@@ -56,6 +56,7 @@
     "katex": "^0.16.47",
     "lucide-react": "^0.468.0",
     "mermaid": "^11.17.2",
+    "monaco-editor": "^0.57.0",
     "openapi-fetch": "^0.13.8",
     "pdfjs-dist": "^4.10.38",
     "postcss": "^8.5.31",

@@ -5,6 +5,7 @@ import { BrowserRouter } from "react-router-dom";
 
 import { App } from "./App";
 import "./design/tokens.css";
+import "katex/dist/katex.min.css";
 
 const queryClient = new QueryClient({
   defaultOptions: {
