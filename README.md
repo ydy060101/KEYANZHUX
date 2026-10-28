@@ -97,7 +97,6 @@ KEYANZHUX/
 2. **迭代 2：文档解析模块** —— PDF 读取、文本解析，修复路径报错
 3. **迭代 3：上下文压缩** —— 长文本处理，解决 token 超限异常
 
-完整对话快照见 `prompt_log.txt`，对话截图见 `screenshot/` 目录。
 
 ## 🧪 验证方式
 
@@ -113,10 +112,5 @@ python main.py
 - 完整前后端源码，可一键启动
 - `README.md` 复现指南
 - `.env.example` 环境变量模板
-- `prompt_log.txt` AI 对话 Prompt 快照
 - 技术文档 PDF（≤30 页）
-- 演示视频（5-8 分钟，MP4 1080p）
 
-## 📝 License
-
-内部科研原型项目。
