@@ -1,4 +1,4 @@
-import { Maximize2, Moon, Search, Sun, ZoomIn, ZoomOut } from "lucide-react";
+import { Columns2, Maximize2, Moon, Search, Sun, ZoomIn, ZoomOut } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { useTheme } from "@/design/theme";
@@ -14,6 +14,8 @@ export function Toolbar({
   onFitWidth,
   onPage,
   fileHref,
+  bilingual,
+  onBilingual,
 }: {
   page: number;
   total: number;
@@ -23,6 +25,8 @@ export function Toolbar({
   onFitWidth: (fit: boolean) => void;
   onPage: (page: number) => void;
   fileHref: string;
+  bilingual: boolean;
+  onBilingual: () => void;
 }) {
   const [draft, setDraft] = useState(String(page));
   useEffect(() => {
@@ -68,6 +72,19 @@ export function Toolbar({
         )}
       >
         适应宽度
+      </button>
+      <button
+        type="button"
+        aria-pressed={bilingual}
+        aria-label="中英对照"
+        onClick={onBilingual}
+        className={cn(
+          "flex shrink-0 items-center gap-1 whitespace-nowrap rounded px-2 py-1 text-[var(--text-xs)]",
+          bilingual ? "bg-surface-2 font-medium text-primary" : "text-ink-2 hover:bg-surface-2 hover:text-ink",
+        )}
+      >
+        <Columns2 className="size-3.5" aria-hidden />
+        对照
       </button>
       <span className="mx-1 h-4 w-px shrink-0 bg-border" />
       <input

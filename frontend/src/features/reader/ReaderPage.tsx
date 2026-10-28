@@ -7,6 +7,7 @@ import { EmptyState, ErrorState, Skeleton } from "@/design/States";
 import type { QaAnchor } from "@/features/qa/api";
 import { asReference, fileUrl, useCitations, useReaderDocument, useStructure } from "./api";
 import { asBbox, useAnchorQuery } from "./anchorQuery";
+import { BilingualPane } from "./BilingualPane";
 import { CitationCard } from "./CitationCard";
 import { CitationOverlay } from "./CitationOverlay";
 import { LeftRail, type LeftTab } from "./LeftRail";
@@ -17,6 +18,7 @@ import { Toolbar } from "./ReaderToolbar";
 import { RightRail, type RightTab } from "./RightRail";
 import { SelectionToolbar } from "./SelectionToolbar";
 import type { TranslateRequest } from "./TranslatePanel";
+import type { Direction } from "./translateApi";
 import { HIGHLIGHT_MS, useCitationLinks } from "./useCitationLinks";
 
 /** How many pages either side of the viewport keep a rendered bitmap. */
@@ -50,6 +52,8 @@ export function ReaderPage() {
   const [leftTab, setLeftTab] = useState<LeftTab>("toc");
   const [rightTab, setRightTab] = useState<RightTab>("structure");
   const [translateRequest, setTranslateRequest] = useState<TranslateRequest | null>(null);
+  const [bilingual, setBilingual] = useState(false);
+  const [bilingualDirection, setBilingualDirection] = useState<Direction>("en2zh");
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const nodes = useRef(new Map<number, HTMLDivElement>());
@@ -291,46 +295,69 @@ export function ReaderPage() {
             scrollToPage(Math.min(total, Math.max(1, next)));
           }}
           fileHref={fileUrl(docId)}
+          bilingual={bilingual}
+          onBilingual={() => {
+            setBilingual((open) => !open);
+          }}
         />
 
         {loadError ? (
           <ErrorState message="PDF 渲染失败" detail={loadError} />
         ) : (
-          <div ref={scrollRef} data-reader-scroll className="app-scroll flex-1 px-6 py-6">
-            {doc ? (
-              <div className="mx-auto flex w-fit flex-col gap-4">
-                {Array.from({ length: total }, (_, index) => index + 1).map((pageNumber) => (
-                  <PageView
-                    key={pageNumber}
-                    doc={doc}
-                    pageNumber={pageNumber}
-                    size={sizes[pageNumber] ?? sizes[1] ?? { width: 612, height: 792 }}
-                    active={visible.has(pageNumber)}
-                    zoom={zoom}
-                    highlight={highlight?.page === pageNumber ? highlight.bbox : null}
-                    onSize={onSize}
-                    onActive={onActive}
-                    register={register}
-                    overlay={
-                      <CitationOverlay
-                        citations={links.citationsByPage.get(pageNumber) ?? []}
-                        zoom={zoom}
-                        onHover={(x, y, marker, citation) => {
-                          links.openCard(x, y, marker, citation, pageNumber);
-                        }}
-                        onLeave={links.scheduleHoverClose}
-                        onOpen={(citation) => {
-                          const reference = links.referenceById.get(citation.ref_ids?.[0] ?? "");
-                          if (reference) links.openReference(reference);
-                          links.setHover(null);
-                        }}
-                      />
-                    }
-                  />
-                ))}
-              </div>
-            ) : (
-              <PageSkeleton />
+          <div className="flex min-h-0 flex-1">
+            <div ref={scrollRef} data-reader-scroll className="app-scroll min-w-0 flex-1 px-6 py-6">
+              {doc ? (
+                <div className="mx-auto flex w-fit flex-col gap-4">
+                  {Array.from({ length: total }, (_, index) => index + 1).map((pageNumber) => (
+                    <PageView
+                      key={pageNumber}
+                      doc={doc}
+                      pageNumber={pageNumber}
+                      size={sizes[pageNumber] ?? sizes[1] ?? { width: 612, height: 792 }}
+                      active={visible.has(pageNumber)}
+                      zoom={zoom}
+                      highlight={highlight?.page === pageNumber ? highlight.bbox : null}
+                      onSize={onSize}
+                      onActive={onActive}
+                      register={register}
+                      overlay={
+                        <CitationOverlay
+                          citations={links.citationsByPage.get(pageNumber) ?? []}
+                          zoom={zoom}
+                          onHover={(x, y, marker, citation) => {
+                            links.openCard(x, y, marker, citation, pageNumber);
+                          }}
+                          onLeave={links.scheduleHoverClose}
+                          onOpen={(citation) => {
+                            const reference = links.referenceById.get(citation.ref_ids?.[0] ?? "");
+                            if (reference) links.openReference(reference);
+                            links.setHover(null);
+                          }}
+                        />
+                      }
+                    />
+                  ))}
+                </div>
+              ) : (
+                <PageSkeleton />
+              )}
+            </div>
+
+            {bilingual && (
+              <BilingualPane
+                docId={docId}
+                direction={bilingualDirection}
+                onDirection={setBilingualDirection}
+                pdfScrollRef={scrollRef}
+                pageNodes={nodes}
+                zoom={zoom}
+                onClose={() => {
+                  setBilingual(false);
+                }}
+                onOpenTranslateTab={() => {
+                  setRightTab("translate");
+                }}
+              />
             )}
           </div>
         )}
