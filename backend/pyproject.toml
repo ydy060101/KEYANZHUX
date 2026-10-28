@@ -25,6 +25,8 @@ dependencies = [
     "pandas>=2.2,<3",
     # Server-side PNG for POST /data/{id}/chart; the browser charts are ECharts.
     "matplotlib>=3.8,<4",
+    # RSS sampling for the figure sandbox's 512 MB limit (H09).
+    "psutil>=7,<8",
     "python-dotenv>=1.0,<2",
     "sentence-transformers>=3,<6",
 ]
@@ -49,8 +51,8 @@ dev = [
     "mypy>=1.13,<2",
     "pre-commit>=4,<5",
     "types-requests",
-    # Peak-RSS sampling for the H11 long-book check (T2.5).
-    "psutil>=7,<8",
+    # Peak-RSS sampling for the H11 long-book check (T2.5); psutil itself is a
+    # runtime dependency because the figure sandbox also samples the child RSS.
     "types-psutil>=7,<8",
 ]
 

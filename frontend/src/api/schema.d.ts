@@ -2016,6 +2016,9 @@ export interface components {
             script?: string;
             rendered?: string | null;
             errors?: string[];
+            notes?: string[];
+            renderer?: string;
+            attempts?: number;
         };
         Dataset: {
             /** Format: uuid */

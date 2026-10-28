@@ -30,7 +30,8 @@ New dependencies must be recorded here with their purpose and why the existing s
 | pymupdf | 1.28.2 | PDF text, bbox, links, rendering | Fixed by the spec. |
 | numpy | 2.4.0 | Vector math | Required by embedding and MinHash. |
 | pandas | 2.3.3 | CSV parsing and chart statistics | Fixed by the spec for the data workshop. |
-| matplotlib | 3.11.2 | Server-side PNG rendering for `POST /data/{id}/chart` | `ChartResult.image_url` needs a static image; the browser ECharts view draws the interactive chart from the same stats but cannot fill that field, and matplotlib is already the whitelisted sandbox library. |
+| matplotlib | 3.11.2 | Server-side PNG rendering for data charts and figure scripts | `ChartResult.image_url` and `FigureResult.rendered` need a static image; browsers draw the interactive views from the same data but cannot fill those fields, and matplotlib is the whitelisted sandbox library. |
+| psutil | 7.2.2 | RSS sampling for the figure sandbox's 512 MB limit (H09) and the H11 long-book check | `resource` is Unix-only and `tracemalloc` misses native buffers; the parent must watch the child process to terminate it before it exhausts the host. |
 | python-dotenv | 1.2.4 | `.env` loading | pydantic-settings reads `.env` through it. |
 | sentence-transformers | 5.7.0 | Local bge-m3 embeddings and bge-reranker-v2-m3 | Fixed by the spec; no hosted endpoint serves these models. Pulls torch 2.14.1+cpu. |
 | paddlepaddle | 3.2.0 | CPU inference runtime for PaddleOCR | Fixed by the spec (PaddleOCR is the required OCR engine) and it has no other runtime. |
@@ -50,7 +51,7 @@ New dependencies must be recorded here with their purpose and why the existing s
 | ruff | 0.17.2 | Lint and format |
 | mypy | 1.19.1 | Static types (strict) |
 | pre-commit | 4.4.0 | Pre-commit checks |
-| psutil / types-psutil | 7.2.2 / 7.2.2.20260906 | Peak-RSS sampling for the H11 check on the 541-page book (`tools/check_long_book.py`, `tests/test_long_book.py`). Nothing else measures the parse worker's own memory; `resource` is Unix-only and `tracemalloc` counts Python allocations only, missing the MuPDF/OCR native buffers that dominate this pipeline. |
+| types-psutil | 7.2.2.20260906 | Type stubs for psutil, used by the H11 long-book check (`tools/check_long_book.py`, `tests/test_long_book.py`) and the figure sandbox. |
 
 ## Frontend
 

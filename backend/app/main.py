@@ -7,10 +7,16 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
-from .errors import AppError, app_error_handler, unhandled_error_handler
+from .errors import (
+    AppError,
+    app_error_handler,
+    unhandled_error_handler,
+    validation_error_handler,
+)
 from .logging_setup import configure_logging
 
 logger = logging.getLogger(__name__)
@@ -44,6 +50,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.add_exception_handler(AppError, app_error_handler)
+    app.add_exception_handler(RequestValidationError, validation_error_handler)
     app.add_exception_handler(Exception, unhandled_error_handler)
 
     @app.get("/healthz")
@@ -53,6 +60,7 @@ def create_app() -> FastAPI:
     from .api import data as data_api
     from .api import discover as discover_api
     from .api import documents as documents_api
+    from .api import figures as figures_api
     from .api import graphs as graphs_api
     from .api import jobs as jobs_api
     from .api import qa as qa_api
@@ -64,6 +72,7 @@ def create_app() -> FastAPI:
     app.include_router(jobs_api.router, prefix=settings.api_prefix)
     app.include_router(documents_api.router, prefix=settings.api_prefix)
     app.include_router(data_api.router, prefix=settings.api_prefix)
+    app.include_router(figures_api.router, prefix=settings.api_prefix)
     app.include_router(qa_api.router, prefix=settings.api_prefix)
     app.include_router(translate_api.router, prefix=settings.api_prefix)
     app.include_router(discover_api.router, prefix=settings.api_prefix)

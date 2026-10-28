@@ -8,6 +8,8 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 
@@ -82,6 +84,21 @@ class RefusedAnswer(AppError):
 async def app_error_handler(_: Request, exc: Exception) -> JSONResponse:
     assert isinstance(exc, AppError)
     return JSONResponse(status_code=exc.status_code, content=exc.to_payload())
+
+
+async def validation_error_handler(_: Request, exc: Exception) -> JSONResponse:
+    """Wrap FastAPI's own 422 body in the H17 envelope."""
+    assert isinstance(exc, RequestValidationError)
+    return JSONResponse(
+        status_code=422,
+        content={
+            "error": {
+                "code": "invalid_request",
+                "message": "请求参数不合法",
+                "detail": {"errors": jsonable_encoder(exc.errors())},
+            }
+        },
+    )
 
 
 async def unhandled_error_handler(_: Request, exc: Exception) -> JSONResponse:

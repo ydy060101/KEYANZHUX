@@ -525,6 +525,11 @@ components:
         errors:
           type: array
           items: { type: string }
+        notes:
+          type: array
+          items: { type: string }
+        renderer: { type: string }
+        attempts: { type: integer }
 
     Dataset:
       type: object

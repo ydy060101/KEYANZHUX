@@ -161,3 +161,21 @@ contract stays unchanged until a human approves it (AGENTS.md §2.3).
 - **Proposal:** Add the path and the fields; the parse still writes chunks with
   `embedding` null.
 - **Status:** Applied in T3.1. Awaiting human approval.
+
+## CR-012 — `FigureResult` needs `notes`, `renderer` and `attempts`
+
+- **Request:** Add three optional fields to `FigureResult` in `openapi.yaml`:
+  `notes: string[]`, `renderer: string` and `attempts: integer`.
+- **Reason:** T7.2 has two successful outcomes that are not errors: TikZ returns
+  its validated source with no image when no LaTeX engine exists, and Graphviz
+  returns a built-in preview when `dot` is absent. The contract's `errors` array
+  cannot describe either without making a success look like a failure, and the
+  UI needs to say which renderer produced the image and how many automatic
+  repairs were spent. `attempts` also lets the studio distinguish a
+  first-try result from one that needed the repair loop.
+- **Impact:** Additive and optional; existing clients ignore the new keys. No
+  existing field changes meaning. `rendered` remains null for Mermaid (rendered
+  in the browser) and for a degraded TikZ result.
+- **Proposal:** Add the three fields to the schema; the endpoint returns them on
+  both `/figures/generate` and `/figures/run`.
+- **Status:** Applied in T7.2. Awaiting human approval.
