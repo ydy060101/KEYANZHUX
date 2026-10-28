@@ -9,4 +9,4 @@ from __future__ import annotations
 
 
 def register_all() -> None:
-    from . import embed_task, import_task, parse_task, translate_task  # noqa: F401
+    from . import embed_task, graph_task, import_task, parse_task, translate_task  # noqa: F401
