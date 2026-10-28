@@ -12,8 +12,10 @@ import logging
 from typing import Any
 
 from ..db import get_session_factory
-from ..models.orm import Document
-from ..translate.service import render_document, translate_document
+from ..models.orm import Document, Job
+from ..translate.glossary import load_glossary
+from ..translate.render import render_document
+from ..translate.service import translate_document
 from .queue import JobService
 from .registry import register_handler
 
@@ -32,6 +34,8 @@ async def translate_job(job_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         doc = await session.get(Document, doc_id)
         if doc is None:
             raise ValueError(f"文档不存在：{doc_id}")
+        job = await session.get(Job, job_id)
+        glossary = load_glossary(job.created_by if job is not None else "default")
         await JobService(session).progress(job_id, stage="translating", progress=0.01)
 
         async def report(done: int, total: int) -> None:
@@ -41,14 +45,17 @@ async def translate_job(job_id: str, payload: dict[str, Any]) -> dict[str, Any]:
                     job_id, stage=f"translate {done}/{total}", progress=0.01 + 0.94 * share
                 )
 
-        result = await translate_document(session, doc_id, direction, get_gateway(), on_progress=report)
+        result = await translate_document(
+            session, doc_id, direction, get_gateway(), on_progress=report, glossary=glossary
+        )
         rendered = await render_document(session, doc_id, direction, fmt)
 
     logger.info(
-        "translate job done doc_id=%s translated=%d cached=%d",
+        "translate job done doc_id=%s translated=%d cached=%d glossary_v=%d",
         doc_id,
         result["translated"],
         result["cached"],
+        result["glossary_version"],
     )
     return {
         **result,

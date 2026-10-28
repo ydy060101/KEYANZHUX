@@ -33,6 +33,52 @@ export interface DocumentTranslation {
   blocks: TranslationBlock[];
 }
 
+export interface GlossaryEntry {
+  source: string;
+  target: string;
+}
+
+export interface Glossary {
+  version: number;
+  entries: GlossaryEntry[];
+  updated_at: string | null;
+}
+
+function toGlossary(payload: unknown): Glossary {
+  const row = record(payload);
+  const entries = Array.isArray(row?.entries) ? row.entries : [];
+  return {
+    version: typeof row?.version === "number" ? row.version : 0,
+    updated_at: typeof row?.updated_at === "string" ? row.updated_at : null,
+    entries: entries.flatMap((item): GlossaryEntry[] => {
+      const entry = record(item);
+      if (!entry || typeof entry.source !== "string" || typeof entry.target !== "string") return [];
+      return [{ source: entry.source, target: entry.target }];
+    }),
+  };
+}
+
+export async function fetchGlossary(): Promise<Glossary> {
+  const response = await fetch("/api/v1/translate/glossary", {
+    headers: { "X-User-Id": "default" },
+  });
+  const payload: unknown = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(humanMessage(toApiError(payload)));
+  return toGlossary(payload);
+}
+
+/** Replace the list; returns the version the next translation will use. */
+export async function saveGlossary(entries: GlossaryEntry[]): Promise<Glossary> {
+  const response = await fetch("/api/v1/translate/glossary", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", "X-User-Id": "default" },
+    body: JSON.stringify({ entries }),
+  });
+  const payload: unknown = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(humanMessage(toApiError(payload)));
+  return toGlossary(payload);
+}
+
 function record(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)

@@ -6,6 +6,7 @@ import { Button } from "@/design/Button";
 import { ErrorState } from "@/design/States";
 import { useJobStream } from "@/features/library/jobs";
 import { cn } from "@/lib/cn";
+import { GlossaryPanel } from "./GlossaryPanel";
 import {
   downloadTranslation,
   fetchTranslation,
@@ -256,6 +257,8 @@ export function TranslatePanel({ docId, request }: TranslatePanelProps) {
           </Button>
         )}
       </section>
+
+      <GlossaryPanel />
 
       {translationQuery.isError && (
         <div className="mt-4">

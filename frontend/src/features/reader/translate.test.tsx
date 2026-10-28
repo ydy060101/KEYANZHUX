@@ -34,6 +34,14 @@ function routeFetch(...chunks: string[]) {
   const fetchMock = vi.fn((input: RequestInfo | URL, _init?: RequestInit) => {
     const url = input instanceof URL ? input.href : typeof input === "string" ? input : input.url;
     if (url.includes("/translate/selection")) return Promise.resolve(stream(...chunks));
+    if (url.includes("/translate/glossary")) {
+      return Promise.resolve(
+        new Response(JSON.stringify({ version: 0, entries: [], updated_at: null }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    }
     if (url.includes("/translation")) {
       return Promise.resolve(
         new Response(JSON.stringify({ doc_id: "doc", direction: "en2zh", lang: "zh", blocks: [] }), {

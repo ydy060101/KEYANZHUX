@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..llm.safety import system_with_guard
+from .glossary import Glossary
 from .service import translate_text
 
 logger = logging.getLogger(__name__)
@@ -82,8 +83,11 @@ def clear_cache() -> None:
     _CACHE.clear()
 
 
-def _key(text: str) -> str:
-    return hashlib.sha256(f"{PROMPT_VERSION}|zh2en|{text}".encode()).hexdigest()
+def _key(text: str, glossary_version: int = 0, glossary_fingerprint: str = "") -> str:
+    stem = f"{PROMPT_VERSION}|zh2en|{text}"
+    if glossary_version or glossary_fingerprint:
+        stem = f"{PROMPT_VERSION}|g{glossary_version}|{glossary_fingerprint}|zh2en|{text}"
+    return hashlib.sha256(stem.encode()).hexdigest()
 
 
 def _remember(key: str, value: str) -> None:
@@ -187,18 +191,18 @@ def missing_terms(source: str, translated: str) -> list[str]:
     )
 
 
-async def _translate_chunk(chunk: str, gateway: Any) -> str:
-    translated, _ = await translate_text(chunk, "zh2en", gateway, system=_system())
+async def _translate_chunk(chunk: str, gateway: Any, glossary: Glossary | None) -> str:
+    translated, _ = await translate_text(chunk, "zh2en", gateway, system=_system(), glossary=glossary)
     missing = missing_terms(chunk, translated)
     if not missing:
         return translated
     logger.info("academic translate: retrying a chunk for %d missing terms", len(missing))
     strict = _system(_STRICT.format(terms=", ".join(missing[:20])))
-    retried, _ = await translate_text(chunk, "zh2en", gateway, system=strict)
+    retried, _ = await translate_text(chunk, "zh2en", gateway, system=strict, glossary=glossary)
     return retried
 
 
-async def translate_academic(text: str, gateway: Any) -> AcademicResult:
+async def translate_academic(text: str, gateway: Any, *, glossary: Glossary | None = None) -> AcademicResult:
     """Translate a Chinese abstract or short paper into academic English."""
     value = text.strip()
     if not value:
@@ -206,7 +210,9 @@ async def translate_academic(text: str, gateway: Any) -> AcademicResult:
     if len(value) > MAX_INPUT_CHARS:
         raise ValueError(f"文本过长：最多 {MAX_INPUT_CHARS} 字符")
 
-    key = _key(value)
+    version = glossary.version if glossary is not None else 0
+    fingerprint = glossary.fingerprint() if glossary is not None and glossary.entries else ""
+    key = _key(value, version, fingerprint)
     hit = _CACHE.get(key)
     if hit is not None:
         _CACHE.move_to_end(key)
@@ -221,7 +227,7 @@ async def translate_academic(text: str, gateway: Any) -> AcademicResult:
 
     async def run(chunk: str) -> str:
         async with semaphore:
-            return await _translate_chunk(chunk, gateway)
+            return await _translate_chunk(chunk, gateway, glossary)
 
     pieces = await asyncio.gather(*(run(chunk) for chunk in chunks))
     translated = "\n\n".join(piece.strip() for piece in pieces if piece.strip()).strip()

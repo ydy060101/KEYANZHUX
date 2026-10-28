@@ -20,7 +20,7 @@ from typing import Any, Literal
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 
 from ..deps import SessionDep, UserIdDep
@@ -29,9 +29,16 @@ from ..llm.errors import LLMError
 from ..models.orm import Block as BlockRow
 from ..models.orm import Document, Translation
 from ..translate.academic import MAX_INPUT_CHARS, translate_academic
+from ..translate.glossary import (
+    MAX_ENTRIES,
+    MAX_SOURCE,
+    MAX_TARGET,
+    load_glossary,
+    save_glossary,
+)
+from ..translate.render import render_document
 from ..translate.service import (
     LANG,
-    render_document,
     stream_translation,
 )
 from ..workers import queue
@@ -59,6 +66,25 @@ class AcademicBody(BaseModel):
     text: str = Field(max_length=MAX_INPUT_CHARS)
     block_id: str | None = None
     direction: Direction = "zh2en"
+
+
+class GlossaryEntryBody(BaseModel):
+    source: str = Field(min_length=1, max_length=MAX_SOURCE)
+    target: str = Field(min_length=1, max_length=MAX_TARGET)
+
+    @field_validator("source", "target")
+    @classmethod
+    def _one_line(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("术语不能为空")
+        if "\n" in value or "\r" in value:
+            raise ValueError("术语不能包含换行")
+        return value
+
+
+class GlossaryBody(BaseModel):
+    entries: list[GlossaryEntryBody] = Field(default_factory=list, max_length=MAX_ENTRIES)
 
 
 def _sse(event: str, data: dict[str, Any]) -> str:
@@ -90,8 +116,26 @@ async def _detect_direction(session: Any, doc_id: str) -> Direction:
     return "zh2en" if cjk / len(text) > 0.3 else "en2zh"
 
 
+@router.get("/translate/glossary")
+async def get_glossary(user: UserIdDep) -> dict[str, Any]:
+    """The reader's terminology list and the version its cache keys use."""
+    return load_glossary(user).as_payload()
+
+
+@router.put("/translate/glossary")
+async def put_glossary(body: GlossaryBody, user: UserIdDep) -> dict[str, Any]:
+    """Replace the list (add and delete are both edits of the whole list)."""
+    try:
+        glossary = save_glossary(user, [entry.model_dump() for entry in body.entries])
+    except ValueError as exc:
+        raise InvalidRequest(str(exc)) from exc
+    return glossary.as_payload()
+
+
 @router.post("/translate/selection")
-async def translate_selection(request: Request, body: SelectionBody, session: SessionDep) -> StreamingResponse:
+async def translate_selection(
+    request: Request, body: SelectionBody, session: SessionDep, user: UserIdDep
+) -> StreamingResponse:
     text = body.text.strip()
     if not text:
         raise InvalidRequest("没有可翻译的文本")
@@ -102,12 +146,14 @@ async def translate_selection(request: Request, body: SelectionBody, session: Se
 
     from ..llm.gateway import get_gateway
 
+    glossary = load_glossary(user)
+
     async def events() -> AsyncIterator[str]:
         items: asyncio.Queue[tuple[str, dict[str, Any]] | None] = asyncio.Queue()
 
         async def pump() -> None:
             try:
-                async for name, data in stream_translation(text, body.direction, get_gateway()):
+                async for name, data in stream_translation(text, body.direction, get_gateway(), glossary=glossary):
                     await items.put((name, data))
             except AppError as exc:
                 await items.put(("error", exc.to_payload()))
@@ -147,7 +193,7 @@ async def translate_selection(request: Request, body: SelectionBody, session: Se
 
 
 @router.post("/translate/zh2en")
-async def translate_zh2en(body: AcademicBody, session: SessionDep) -> dict[str, Any]:
+async def translate_zh2en(body: AcademicBody, session: SessionDep, user: UserIdDep) -> dict[str, Any]:
     """Chinese abstract or short paper → academic English (synchronous)."""
     text = body.text.strip()
     if not text:
@@ -162,7 +208,7 @@ async def translate_zh2en(body: AcademicBody, session: SessionDep) -> dict[str, 
     from ..llm.gateway import get_gateway
 
     try:
-        result = await translate_academic(text, get_gateway())
+        result = await translate_academic(text, get_gateway(), glossary=load_glossary(user))
     except ValueError as exc:
         raise InvalidRequest(str(exc)) from exc
     except LLMError as exc:

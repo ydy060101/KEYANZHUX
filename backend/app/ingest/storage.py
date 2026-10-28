@@ -42,6 +42,13 @@ def translation_dir(doc_id: str) -> Path:
     return path
 
 
+def glossary_dir() -> Path:
+    """Per-user terminology files (T4.4); no document owns them."""
+    path = _data_dir() / "glossary"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def figure_dir() -> Path:
     path = _data_dir() / "figures"
     path.mkdir(parents=True, exist_ok=True)

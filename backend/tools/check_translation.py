@@ -25,7 +25,7 @@ from pathlib import Path
 
 BACKEND = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BACKEND))
-sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
 
 import httpx  # noqa: E402
 from sqlalchemy import func, select, text  # noqa: E402
@@ -34,6 +34,7 @@ from app import db  # noqa: E402
 from app.config import get_settings  # noqa: E402
 from app.llm.gateway import get_gateway  # noqa: E402
 from app.models.orm import Block, Document, Translation  # noqa: E402
+from app.translate.glossary import Entry, Glossary  # noqa: E402
 from app.translate.protect import split_segments  # noqa: E402
 from app.translate.service import translate_document, translate_text  # noqa: E402
 
@@ -228,13 +229,64 @@ async def _document() -> bool:
     return ok
 
 
+async def _glossary_cache() -> bool:
+    """T4.4: same glossary version hits the cache; an edit invalidates it."""
+    engine = db.get_engine()
+    factory = db.get_session_factory()
+    gateway = get_gateway()
+    first_terms = Glossary(version=1, entries=(Entry("attention", "注意力"),))
+    edited_terms = Glossary(version=2, entries=(Entry("attention", "注意力机制"),))
+    try:
+        async with factory() as session:
+            doc = await session.get(Document, CHECK_DOC)
+            if doc is None:
+                print("T3: FAIL — the T2 sample document is missing")
+                return False
+            first = await translate_document(
+                session, CHECK_DOC, "en2zh", gateway, limit=2, glossary=first_terms
+            )
+            second = await translate_document(
+                session, CHECK_DOC, "en2zh", gateway, limit=2, glossary=first_terms
+            )
+            edited = await translate_document(
+                session, CHECK_DOC, "en2zh", gateway, limit=2, glossary=edited_terms
+            )
+            print(
+                f"  glossary v1 first: translated={first['translated']} cached={first['cached']}"
+            )
+            print(
+                f"  glossary v1 again: translated={second['translated']} cached={second['cached']}"
+            )
+            print(
+                f"  glossary v2 after edit: translated={edited['translated']} "
+                f"cached={edited['cached']}"
+            )
+            ok = bool(
+                first["glossary_version"] == 1
+                and first["translated"] == 2
+                and second["glossary_version"] == 1
+                and second["cached"] == 2
+                and second["translated"] == 0
+                and edited["glossary_version"] == 2
+                and edited["translated"] == 2
+                and edited["cached"] == 0
+            )
+    finally:
+        await engine.dispose()
+    print(
+        f"T3: {'PASS' if ok else 'FAIL'} — an unchanged glossary hits the cache; a new version retranslates"
+    )
+    return ok
+
+
 async def main() -> int:
     settings = get_settings()
     print(f"gateway: {settings.llm_base_url} (fast={settings.llm_fast})")
     t1 = await _selection()
     t2 = await _document()
-    print(f"translation: {'PASS' if t1 and t2 else 'FAIL'}")
-    return 0 if t1 and t2 else 1
+    t3 = await _glossary_cache()
+    print(f"translation: {'PASS' if t1 and t2 and t3 else 'FAIL'}")
+    return 0 if t1 and t2 and t3 else 1
 
 
 if __name__ == "__main__":

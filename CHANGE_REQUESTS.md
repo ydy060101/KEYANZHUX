@@ -179,3 +179,25 @@ contract stays unchanged until a human approves it (AGENTS.md §2.3).
 - **Proposal:** Add the three fields to the schema; the endpoint returns them on
   both `/figures/generate` and `/figures/run`.
 - **Status:** Applied in T7.2. Awaiting human approval.
+
+## CR-013 — Glossary endpoints and `glossary_version` in the translation job result
+
+- **Request:** Add `GET /translate/glossary` and `PUT /translate/glossary`
+  (`{entries: [{source, target}]}` → `{version, entries, updated_at}`), and add
+  `glossary_version` to the `translate` job's `result`.
+- **Reason:** T4.4 requires a reader-editable terminology list whose version is
+  part of the cache key, but 01 §5.3 defines no glossary path and 01 §4 has no
+  glossary table. The version also has to be observable to prove the cache
+  behaviour: without it the API cannot say which list produced the rows a job
+  reused.
+- **Impact:** Additive. Two new paths, one additive field in the free-form job
+  result. No existing field or path changes. Cache keys for users with no list
+  keep their exact previous value; a non-zero version appends `|g{n}` plus a
+  short hash of the list, because translation rows are shared per document
+  while glossary versions are per user.
+- **Proposal:** Keep the glossary out of PostgreSQL for this release — one JSON
+  file per user under `data/glossary/`, named by a hash of the user id — and add
+  the paths and the field. The file is replaced atomically and its version only
+  advances when the content changes. `PUT` replaces the list, so both add and
+  delete are one call.
+- **Status:** Applied in T4.4. Awaiting human approval.

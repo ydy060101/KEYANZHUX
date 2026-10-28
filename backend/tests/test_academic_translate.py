@@ -25,6 +25,7 @@ from app.translate.academic import (
     missing_terms,
     translate_academic,
 )
+from app.translate.glossary import Entry, Glossary
 
 SOURCE = "本文提出 Transformer 与 RAG 方法，见 $E=mc^2$ 和 [12]，BLEU 提升 3.5。"
 
@@ -132,6 +133,25 @@ async def test_second_identical_request_returns_the_cache() -> None:
     assert second.cached is True
     assert second.text == first.text
     assert len(gateway.calls) == calls
+
+
+async def test_glossary_reaches_the_prompt_and_changes_the_cache_key() -> None:
+    gateway = TermGateway()
+    first_terms = Glossary(version=1, entries=(Entry("RAG", "检索增强生成"),))
+    first = await translate_academic(SOURCE, gateway, glossary=first_terms)
+    assert first.cached is False
+    assert any("RAG => 检索增强生成" in messages[0]["content"] for messages in gateway.calls)
+
+    calls = len(gateway.calls)
+    again = await translate_academic(SOURCE, gateway, glossary=first_terms)
+    assert again.cached is True
+    assert len(gateway.calls) == calls
+
+    edited_terms = Glossary(version=2, entries=(Entry("RAG", "RAG 方法"),))
+    edited = await translate_academic(SOURCE, gateway, glossary=edited_terms)
+    assert edited.cached is False
+    assert len(gateway.calls) == calls + 1
+    assert any("RAG => RAG 方法" in messages[0]["content"] for messages in gateway.calls[calls:])
 
 
 async def test_empty_and_overlong_text_are_handled_without_calls() -> None:
