@@ -1,213 +1,185 @@
-import { Download, GitFork } from "lucide-react";
-import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import type cytoscape from "cytoscape";
+import { GitFork, Plus } from "lucide-react";
+import { useCallback, useMemo, useRef, useState } from "react";
+import { Link, useParams } from "react-router-dom";
 
-import { Button } from "@/design/Button";
-import { EmptyState } from "@/design/States";
-import { cn } from "@/lib/cn";
+import { EmptyState, ErrorState, Skeleton } from "@/design/States";
+import { fetchGraph, graphKeys, ROLE_ORDER, type GraphLayout, type GraphRole } from "@/features/graph/api";
+import { CytoscapeGraph } from "@/features/graph/CytoscapeGraph";
+import { GraphPanel } from "@/features/graph/GraphPanel";
+import { GraphSelection } from "@/features/graph/GraphSelection";
+import { GraphSidebar } from "@/features/graph/GraphSidebar";
 
-interface Node {
-  id: string;
-  label: string;
-  year: number;
-  role: "cornerstone" | "middle" | "peripheral";
-  pagerank: number;
-  inDegree: number;
-  x: number;
-  y: number;
+function readSurface(): string {
+  if (typeof document === "undefined") return "#ffffff";
+  return getComputedStyle(document.documentElement).getPropertyValue("--surface").trim() || "#ffffff";
 }
 
-const NODES: Node[] = [
-  { id: "n1", label: "Attention Is All You Need", year: 2017, role: "cornerstone", pagerank: 0.31, inDegree: 9, x: 50, y: 42 },
-  { id: "n2", label: "BERT", year: 2018, role: "cornerstone", pagerank: 0.24, inDegree: 7, x: 34, y: 30 },
-  { id: "n3", label: "GPT-3", year: 2020, role: "cornerstone", pagerank: 0.18, inDegree: 6, x: 68, y: 24 },
-  { id: "n4", label: "RoBERTa", year: 2019, role: "middle", pagerank: 0.09, inDegree: 3, x: 26, y: 62 },
-  { id: "n5", label: "T5", year: 2019, role: "middle", pagerank: 0.07, inDegree: 2, x: 62, y: 58 },
-  { id: "n6", label: "LLaMA", year: 2023, role: "peripheral", pagerank: 0.04, inDegree: 1, x: 78, y: 74 },
-  { id: "n7", label: "Chinchilla", year: 2022, role: "peripheral", pagerank: 0.04, inDegree: 1, x: 44, y: 78 },
-  { id: "n8", label: "FlashAttention", year: 2022, role: "peripheral", pagerank: 0.03, inDegree: 1, x: 20, y: 46 },
-];
-
-const EDGES: [string, string][] = [
-  ["n2", "n1"],
-  ["n3", "n1"],
-  ["n4", "n2"],
-  ["n5", "n1"],
-  ["n6", "n3"],
-  ["n7", "n3"],
-  ["n8", "n1"],
-  ["n3", "n2"],
-  ["n4", "n5"],
-];
-
-const ROLE_STYLE: Record<Node["role"], string> = {
-  cornerstone: "bg-primary text-white",
-  middle: "bg-ink-2 text-white",
-  peripheral: "bg-accent text-white",
-};
-
-const ROLE_LABEL: Record<Node["role"], string> = {
-  cornerstone: "基石",
-  middle: "中间",
-  peripheral: "边缘",
-};
+function download(name: string, href: string, revoke = false): void {
+  const link = document.createElement("a");
+  link.href = href;
+  link.download = name;
+  link.click();
+  if (revoke) window.setTimeout(() => URL.revokeObjectURL(href), 1000);
+}
 
 export function GraphPage() {
-  const [selected, setSelected] = useState<Node | null>(NODES[0] ?? null);
-  const [tab, setTab] = useState<"survey" | "future" | "metrics">("metrics");
+  const { graphId } = useParams<{ graphId: string }>();
+  return graphId ? <GraphWorkspace graphId={graphId} /> : <GraphSelection />;
+}
 
-  const byId = new Map(NODES.map((node) => [node.id, node]));
+function GraphWorkspace({ graphId }: { graphId: string }) {
+  const query = useQuery({
+    queryKey: graphKeys.detail(graphId),
+    queryFn: () => fetchGraph(graphId),
+    staleTime: 5 * 60 * 1000,
+    retry: false,
+  });
+
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [roles, setRoles] = useState<Set<GraphRole>>(new Set(ROLE_ORDER));
+  const [minYear, setMinYear] = useState<number | null>(null);
+  const [minInDegree, setMinInDegree] = useState(0);
+  const [layout, setLayout] = useState<GraphLayout>("force");
+  const core = useRef<cytoscape.Core | null>(null);
+  const onCore = useCallback((value: cytoscape.Core | null) => {
+    core.current = value;
+  }, []);
+
+  const graph = query.data;
+  const nodes = useMemo(() => graph?.nodes ?? [], [graph]);
+  const years = nodes.map((node) => node.year).filter((year): year is number => year !== null);
+  const yearBounds = years.length > 0 ? { min: Math.min(...years), max: Math.max(...years) } : null;
+
+  const visibleIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const node of nodes) {
+      if (!roles.has(node.role)) continue;
+      if (minYear !== null && node.year !== null && node.year < minYear) continue;
+      if (node.inDegree < minInDegree) continue;
+      ids.add(node.id);
+    }
+    return ids;
+  }, [nodes, roles, minYear, minInDegree]);
+
+  const selected = nodes.find((node) => node.id === selectedId) ?? null;
+  const onSelect = useCallback((id: string | null) => {
+    setSelectedId(id);
+  }, []);
+
+  const toggleRole = (role: GraphRole) => {
+    setRoles((current) => {
+      const next = new Set(current);
+      if (next.has(role)) next.delete(role);
+      else next.add(role);
+      return next;
+    });
+  };
+
+  const exportJson = () => {
+    if (!graph) return;
+    const blob = new Blob([JSON.stringify(graph, null, 2)], { type: "application/json" });
+    download(`graph-${graph.id.slice(0, 8)}.json`, URL.createObjectURL(blob), true);
+  };
+
+  const exportPng = () => {
+    if (!core.current || !graph) return;
+    download(`graph-${graph.id.slice(0, 8)}.png`, core.current.png({ full: true, scale: 2, bg: readSurface() }));
+  };
+
+  if (query.isPending) {
+    return (
+      <div className="flex h-full min-h-0 flex-col gap-3 p-6" aria-busy>
+        <Skeleton className="h-8 w-52" />
+        <Skeleton className="flex-1" />
+      </div>
+    );
+  }
+
+  if (query.isError || !graph) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <ErrorState
+          message="图谱加载失败"
+          detail={query.error instanceof Error ? query.error.message : undefined}
+          onRetry={() => {
+            void query.refetch();
+          }}
+        />
+      </div>
+    );
+  }
 
   return (
-    <div className="flex h-full min-h-0">
-      <aside className="flex w-[200px] shrink-0 flex-col gap-3 border-r border-border bg-surface p-3">
-        <h2 className="text-[var(--text-sm)] font-medium text-ink">筛选</h2>
-        {(["cornerstone", "middle", "peripheral"] as const).map((role) => (
-          <label key={role} className="flex items-center gap-2 text-[var(--text-sm)] text-ink-2">
-            <input type="checkbox" defaultChecked />
-            {ROLE_LABEL[role]}
-          </label>
-        ))}
-        <div className="mt-2 space-y-1">
-          <p className="text-[var(--text-sm)] text-ink-2">年份</p>
-          <input type="range" min={2017} max={2023} defaultValue={2017} className="w-full" aria-label="起始年份" />
-        </div>
-        <div className="mt-auto flex flex-col gap-2">
-          <Button size="sm" variant="secondary">
-            <Download className="size-4" aria-hidden />
-            导出 PNG
-          </Button>
-          <Button size="sm" variant="secondary">
-            <Download className="size-4" aria-hidden />
-            导出 JSON
-          </Button>
-        </div>
-      </aside>
+    <div className="flex h-full min-h-0 flex-col">
+      <header className="flex h-12 shrink-0 items-center gap-3 border-b border-border px-4">
+        <h1 className="text-[var(--text-base)] font-medium text-ink">引用图谱</h1>
+        <span className="text-[var(--text-xs)] text-ink-2" data-testid="graph-summary">
+          {graph.nodes.length} 节点 · {graph.edges.length} 边
+        </span>
+        <Link
+          to="/graph"
+          className="ml-auto inline-flex items-center gap-1 text-[var(--text-sm)] font-medium text-primary hover:underline"
+        >
+          <Plus className="size-3.5" aria-hidden />
+          新建图谱
+        </Link>
+      </header>
 
-      <section className="relative min-w-0 flex-1 bg-surface-2">
-        <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="h-full w-full" role="img" aria-label="引用关系图">
-          {EDGES.map(([from, to]) => {
-            const a = byId.get(from);
-            const b = byId.get(to);
-            if (!a || !b) return null;
-            return (
-              <line
-                key={`${from}-${to}`}
-                x1={a.x}
-                y1={a.y}
-                x2={b.x}
-                y2={b.y}
-                stroke="var(--border)"
-                strokeWidth={0.4}
-                markerEnd="url(#arrow)"
+      <div className="flex min-h-0 flex-1">
+        <GraphSidebar
+          roles={roles}
+          onToggleRole={toggleRole}
+          yearBounds={yearBounds}
+          minYear={minYear}
+          onMinYear={setMinYear}
+          minInDegree={minInDegree}
+          onMinInDegree={setMinInDegree}
+          layout={layout}
+          onLayout={setLayout}
+          nodeCount={graph.nodes.length}
+          hiddenCount={graph.nodes.length - visibleIds.size}
+          canExport={graph.nodes.length > 0}
+          onExportPng={exportPng}
+          onExportJson={exportJson}
+        />
+
+        <section className="relative min-w-0 flex-1 bg-surface-2">
+          {graph.nodes.length > 0 ? (
+            <CytoscapeGraph
+              graph={graph}
+              selectedId={selectedId}
+              visibleIds={visibleIds}
+              layout={layout}
+              onSelect={onSelect}
+              onCore={onCore}
+            />
+          ) : (
+            <div className="flex h-full items-center justify-center">
+              <EmptyState
+                title="所选文献之间没有可匹配的引用"
+                description={`匹配按 DOI → arXiv ID → 标题（≥ 0.92 且年份一致）进行；未匹配的参考文献不进入图。${typeof graph.metrics["unmatched_references"] === "number" ? `本次有 ${String(graph.metrics["unmatched_references"])} 条参考文献未匹配到所选文献。` : ""}`}
+                icon={<GitFork className="size-6" aria-hidden />}
+                action={
+                  <Link to="/graph" className="text-[var(--text-sm)] font-medium text-primary hover:underline">
+                    换一组文献
+                  </Link>
+                }
               />
-            );
-          })}
-          <defs>
-            <marker id="arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
-              <path d="M0,0 L6,3 L0,6 z" fill="var(--border)" />
-            </marker>
-          </defs>
-        </svg>
-        {NODES.map((node) => (
-          <button
-            key={node.id}
-            type="button"
-            onClick={() => {
-              setSelected(node);
-            }}
-            style={{
-              left: `${String(node.x)}%`,
-              top: `${String(node.y)}%`,
-              width: `${String(60 + node.inDegree * 8)}px`,
-              height: `${String(60 + node.inDegree * 8)}px`,
-            }}
-            className={cn(
-              "absolute flex -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full p-2 text-center text-[10px] leading-tight transition-transform hover:scale-105",
-              ROLE_STYLE[node.role],
-              selected?.id === node.id && "ring-2 ring-primary ring-offset-2 ring-offset-surface-2",
-            )}
-            title={`${node.label} (${String(node.year)})`}
-          >
-            <span className="line-clamp-2">{node.label}</span>
-          </button>
-        ))}
-        <div className="absolute bottom-3 left-3 flex gap-3 rounded-control border border-border bg-surface px-3 py-1.5 text-[var(--text-xs)] text-ink-2">
-          {(["cornerstone", "middle", "peripheral"] as const).map((role) => (
-            <span key={role} className="flex items-center gap-1.5">
-              <span className={cn("size-2.5 rounded-full", ROLE_STYLE[role])} />
-              {ROLE_LABEL[role]}
-            </span>
-          ))}
-        </div>
-      </section>
-
-      <aside className="flex w-[320px] shrink-0 flex-col border-l border-border bg-surface">
-        {selected ? (
-          <div className="border-b border-border p-4">
-            <h3 className="text-[var(--text-base)] font-medium leading-snug text-ink">{selected.label}</h3>
-            <p className="mt-1 text-[var(--text-sm)] text-ink-2">
-              {selected.year} · {ROLE_LABEL[selected.role]}
-            </p>
-            <dl className="mt-2 grid grid-cols-2 gap-1 text-[var(--text-sm)]">
-              <dt className="text-ink-2">入度</dt>
-              <dd className="text-ink">{selected.inDegree}</dd>
-              <dt className="text-ink-2">PageRank</dt>
-              <dd className="text-ink">{selected.pagerank.toFixed(2)}</dd>
-            </dl>
-            <Button size="sm" variant="secondary" className="mt-3 w-full">
-              在阅读器中打开
-            </Button>
-          </div>
-        ) : (
-          <div className="border-b border-border p-4">
-            <EmptyState title="未选择节点" description="点击图中节点查看详情。" icon={<GitFork className="size-6" aria-hidden />} />
-          </div>
-        )}
-
-        <div className="flex border-b border-border" role="tablist" aria-label="图谱面板">
-          {(
-            [
-              ["survey", "综述"],
-              ["future", "Future Work"],
-              ["metrics", "指标榜"],
-            ] as const
-          ).map(([key, label]) => (
-            <button
-              key={key}
-              type="button"
-              role="tab"
-              aria-selected={tab === key}
-              onClick={() => {
-                setTab(key);
-              }}
-              className={cn(
-                "flex-1 py-2 text-[var(--text-xs)]",
-                tab === key ? "border-b-2 border-primary font-medium text-primary" : "text-ink-2",
-              )}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-        <div className="app-scroll flex-1 p-4">
-          {tab === "metrics" && (
-            <ol className="space-y-2">
-              {[...NODES]
-                .sort((a, b) => b.pagerank - a.pagerank)
-                .slice(0, 5)
-                .map((node, index) => (
-                  <li key={node.id} className="flex items-center gap-2 text-[var(--text-sm)]">
-                    <span className="w-4 text-ink-2">{index + 1}</span>
-                    <span className="min-w-0 flex-1 truncate text-ink">{node.label}</span>
-                    <span className="text-ink-2">{node.pagerank.toFixed(2)}</span>
-                  </li>
-                ))}
-            </ol>
+            </div>
           )}
-          {tab === "survey" && <EmptyState title="尚未生成综述" description="基于图谱生成 400–800 字综述，每条论断可溯源。" />}
-          {tab === "future" && <EmptyState title="尚未分析" description="抽取未来工作方向，并判定是否已被后续论文解决。" />}
-        </div>
-      </aside>
+          {graph.nodes.length > 0 && visibleIds.size === 0 && (
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+              <p className="rounded-card border border-border bg-surface px-4 py-3 text-[var(--text-sm)] text-ink-2 shadow-sm">
+                当前筛选没有匹配的节点，放宽条件试试。
+              </p>
+            </div>
+          )}
+        </section>
+
+        <GraphPanel graph={graph} selected={selected} onSelect={setSelectedId} />
+      </div>
     </div>
   );
 }

@@ -2,11 +2,24 @@ import createClient from "openapi-fetch";
 
 import type { paths } from "./schema";
 
-/** Typed client for the contract in openapi.yaml. The base URL is relative so
- *  the same build works behind the Vite proxy and in a packaged app. */
+/** Typed client for the contract in openapi.yaml.
+ *
+ *  The base URL stays same-origin: behind the Vite proxy in development, on
+ *  the serving host in production. It is absolute when the page has an http
+ *  origin because `openapi-fetch` builds a `Request`, and a `Request` cannot
+ *  carry a relative URL outside a browser (unit tests run in Node). A
+ *  non-http origin (a packaged file:// build) keeps the relative form. */
+const origin =
+  typeof window !== "undefined" && window.location.protocol.startsWith("http")
+    ? window.location.origin
+    : "";
+
 export const api = createClient<paths>({
-  baseUrl: "/api/v1",
+  baseUrl: `${origin}/api/v1`,
   headers: { "X-User-Id": "default" },
+  // Resolve fetch per call: `createClient` otherwise captures the global at
+  // import time, which makes the client unreachable from tests that stub it.
+  fetch: (input: Request) => globalThis.fetch(input),
 });
 
 /** H17: turn the error envelope into something a person can read. */

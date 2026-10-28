@@ -17,6 +17,10 @@ export default {
         warn: "var(--warn)",
         danger: "var(--danger)",
         success: "var(--success)",
+        "accent-text": "var(--accent-text)",
+        "warn-text": "var(--warn-text)",
+        "danger-text": "var(--danger-text)",
+        "success-text": "var(--success-text)",
         hl: "var(--hl)",
       },
       borderRadius: {
