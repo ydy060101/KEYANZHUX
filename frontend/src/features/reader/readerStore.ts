@@ -4,6 +4,8 @@ import { create } from "zustand";
 export interface Target {
   page: number;
   blockId?: string;
+  /** The bbox to highlight; QA anchors carry it, outline jumps do not. */
+  bbox?: number[];
   /** Highlight the block's bbox after scrolling to it. */
   highlight?: boolean;
 }

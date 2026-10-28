@@ -109,27 +109,3 @@ export const mockBlocks: Block[] = [
   { id: "b6", type: "reference", page: 11, bbox: [72, 460, 540, 480], reading_order: 5, section_id: null, text: "[11] S. Hochreiter and J. Schmidhuber. Long short-term memory. Neural Computation, 9(8):1735–1780, 1997.", latex: null, html: null, asset_id: null, lang: "en", confidence: 0.97 },
 ];
 
-export interface MockQAAnswer {
-  question: string;
-  answer: string;
-  citations: { marker: string; page: number; quote: string }[];
-  refused: boolean;
-}
-
-export const mockQA: MockQAAnswer[] = [
-  {
-    question: "训练使用了什么 GPU？",
-    answer:
-      "作者在一台配备 8 块 NVIDIA P100 GPU 的机器上训练模型 [1]。base 模型训练了 12 小时，big 模型训练了 3.5 天 [1]。",
-    citations: [
-      { marker: "[1]", page: 7, quote: "We trained our models on one machine with 8 NVIDIA P100 GPUs." },
-    ],
-    refused: false,
-  },
-  {
-    question: "这篇论文在 ImageNet 上的准确率是多少？",
-    answer: "",
-    citations: [],
-    refused: true,
-  },
-];

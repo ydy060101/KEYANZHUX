@@ -1,20 +1,21 @@
-import { BookOpen, FileText, Image } from "lucide-react";
+import { BookOpen } from "lucide-react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
 import { EmptyState, ErrorState, Skeleton } from "@/design/States";
-import { cn } from "@/lib/cn";
-import { asReference, fileUrl, useCitations, useReaderDocument, useStructure, type OutlineItem } from "./api";
+import type { QaAnchor } from "@/features/qa/api";
+import { asReference, fileUrl, useCitations, useReaderDocument, useStructure } from "./api";
+import { asBbox, useAnchorQuery } from "./anchorQuery";
 import { CitationCard } from "./CitationCard";
 import { CitationOverlay } from "./CitationOverlay";
-import { OutlinePanel } from "./OutlinePanel";
+import { LeftRail, type LeftTab } from "./LeftRail";
 import { PageView, type PageSize } from "./PageView";
 import { loadPdf, pageSize as measurePage } from "./pdf";
 import { useReader, clampZoom } from "./readerStore";
-import { Thumbnails, Toolbar } from "./ReaderToolbar";
+import { Toolbar } from "./ReaderToolbar";
+import { RightRail, type RightTab } from "./RightRail";
 import { SelectionToolbar } from "./SelectionToolbar";
-import { StructurePanel } from "./StructurePanel";
 import { HIGHLIGHT_MS, useCitationLinks } from "./useCitationLinks";
 
 /** How many pages either side of the viewport keep a rendered bitmap. */
@@ -37,6 +38,7 @@ export function ReaderPage() {
   const setActiveSection = useReader((s) => s.setActiveSection);
   const activeSection = useReader((s) => s.activeSectionId);
   const consumePending = useReader((s) => s.consumePending);
+  const pending = useReader((s) => s.pending);
   const flashRefId = useReader((s) => s.flashRefId);
 
   const [doc, setDoc] = useState<PDFDocumentProxy | null>(null);
@@ -44,8 +46,8 @@ export function ReaderPage() {
   const [sizes, setSizes] = useState<Record<number, PageSize>>({});
   const [visible, setVisible] = useState<Set<number>>(() => new Set([1, 2, 3]));
   const [highlight, setHighlight] = useState<{ page: number; bbox: [number, number, number, number] } | null>(null);
-  const [leftTab, setLeftTab] = useState<"toc" | "thumbs">("toc");
-  const [rightTab, setRightTab] = useState<"structure" | "qa" | "translate">("structure");
+  const [leftTab, setLeftTab] = useState<LeftTab>("toc");
+  const [rightTab, setRightTab] = useState<RightTab>("structure");
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const nodes = useRef(new Map<number, HTMLDivElement>());
@@ -71,6 +73,16 @@ export function ReaderPage() {
         // position the reader restores lands on the wrong page.
         const first = await measurePage(loaded, 1);
         if (isCancelled()) return;
+        // Fit the width in the same commit as the first measured page: an
+        // anchor jump is applied as soon as page 1's size is known, and a
+        // zoom change one commit later would move every page under it.
+        const host = scrollRef.current;
+        if (useReader.getState().fitWidth && host) {
+          const available = host.clientWidth - FIT_PADDING;
+          if (available > 0) {
+            useReader.setState({ zoom: clampZoom(Math.floor((available / first.width) * 100)) });
+          }
+        }
         setSizes({ 1: first });
       })
       .catch((error: unknown) => {
@@ -81,6 +93,8 @@ export function ReaderPage() {
       cancelled.current = true;
     };
   }, [docId]);
+
+  useAnchorQuery(doc, docId);
 
   const register = useCallback((pageNumber: number, node: HTMLDivElement | null) => {
     if (node) nodes.current.set(pageNumber, node);
@@ -135,10 +149,14 @@ export function ReaderPage() {
   );
 
   // ---- scrolling to a target --------------------------------------------
-  const scrollToPage = useCallback((target: number) => {
+  // An instant scroll is used for programmatic jumps: the page boxes are
+  // sized from page 1 until a page is measured, and a smooth animation would
+  // keep moving while those sizes settle, landing the reader pages away from
+  // the target on a long book.
+  const scrollToPage = useCallback((target: number, smooth = true) => {
     const node = nodes.current.get(target);
     if (node) {
-      node.scrollIntoView({ behavior: "smooth", block: "start" });
+      node.scrollIntoView({ behavior: smooth ? "smooth" : "auto", block: "start" });
       return;
     }
     pendingScroll.current = target;
@@ -153,26 +171,46 @@ export function ReaderPage() {
     pendingScroll.current = null;
   }, [sizes]);
 
-  // A jump requested by the outline, the structure panel or an anchor.
+  // A jump requested by the outline, the structure panel or an anchor. It is
+  // applied once page 1's true size is known: before that, every unmeasured
+  // page is a Letter-sized placeholder and the target's offset is wrong.
   useEffect(() => {
-    const target = consumePending();
-    if (!target) return;
-    scrollToPage(target.page);
-    if (target.highlight && target.blockId) {
-      const block = citationsQuery.data?.find((c) => c.block_id === target.blockId);
-      if (block?.bbox && block.bbox.length === 4) {
-        setHighlight({ page: target.page, bbox: block.bbox as [number, number, number, number] });
-        window.setTimeout(() => {
-          setHighlight(null);
-        }, HIGHLIGHT_MS);
-      }
-    }
-  }, [consumePending, scrollToPage, citationsQuery.data, page]);
+    if (!pending || !sizes[1]) return;
+    consumePending();
+    scrollToPage(pending.page, false);
+    if (!pending.highlight) return;
+    const direct = pending.bbox ? asBbox(pending.bbox) : null;
+    const block =
+      direct === null && pending.blockId
+        ? citationsQuery.data?.find((c) => c.block_id === pending.blockId)
+        : undefined;
+    const box = direct ?? asBbox(block?.bbox);
+    if (!box) return;
+    setHighlight({ page: pending.page, bbox: box });
+    window.setTimeout(() => {
+      setHighlight(null);
+    }, HIGHLIGHT_MS);
+  }, [pending, sizes, consumePending, scrollToPage, citationsQuery.data]);
 
   // ---- citation interaction ---------------------------------------------
   const openStructure = useCallback(() => {
     setRightTab("structure");
   }, []);
+
+  // A QA anchor for this paper jumps in place; another paper's anchor opens
+  // the full reader on the page and bbox the query names.
+  const openAnchor = useCallback(
+    (anchor: QaAnchor) => {
+      if (anchor.doc_id === docId) {
+        jump({ page: anchor.page, blockId: anchor.block_id, bbox: anchor.bbox, highlight: true });
+        return;
+      }
+      const params = new URLSearchParams({ page: String(anchor.page) });
+      if (anchor.bbox.length === 4) params.set("bbox", anchor.bbox.join(","));
+      void navigate(`/reader/${encodeURIComponent(anchor.doc_id)}?${params.toString()}`);
+    },
+    [docId, jump, navigate],
+  );
   const references = useMemo(
     () => (structureQuery.data?.references ?? []).map(asReference),
     [structureQuery.data?.references],
@@ -221,41 +259,19 @@ export function ReaderPage() {
 
   return (
     <div className="flex h-full min-h-0">
-      <aside className="flex w-[248px] shrink-0 flex-col border-r border-border bg-surface">
-        <div className="flex border-b border-border" role="tablist" aria-label="左栏">
-          {(["toc", "thumbs"] as const).map((key) => (
-            <button
-              key={key}
-              role="tab"
-              aria-selected={leftTab === key}
-              onClick={() => {
-                setLeftTab(key);
-              }}
-              className={cn(
-                "flex flex-1 items-center justify-center gap-1.5 py-2 text-[var(--text-sm)]",
-                leftTab === key ? "border-b-2 border-primary font-medium text-primary" : "text-ink-2",
-              )}
-            >
-              {key === "toc" ? <FileText className="size-3.5" aria-hidden /> : <Image className="size-3.5" aria-hidden />}
-              {key === "toc" ? "目录" : "缩略图"}
-            </button>
-          ))}
-        </div>
-        <div className="min-h-0 flex-1">
-          {leftTab === "toc" ? (
-            <OutlinePanel
-              items={structureQuery.data?.outline ?? []}
-              activeId={activeSection}
-              onPick={(item: OutlineItem) => {
-                setActiveSection(item.id);
-                jump({ page: item.page, blockId: item.block_id, highlight: true });
-              }}
-            />
-          ) : (
-            <Thumbnails total={total} current={page} onPick={scrollToPage} />
-          )}
-        </div>
-      </aside>
+      <LeftRail
+        tab={leftTab}
+        onTab={setLeftTab}
+        outline={structureQuery.data?.outline ?? []}
+        activeId={activeSection}
+        onPick={(item) => {
+          setActiveSection(item.id);
+          jump({ page: item.page, blockId: item.block_id, highlight: true });
+        }}
+        total={total}
+        page={page}
+        onPickPage={scrollToPage}
+      />
 
       <section className="flex min-w-0 flex-1 flex-col bg-surface-2">
         <Toolbar
@@ -286,7 +302,7 @@ export function ReaderPage() {
                     key={pageNumber}
                     doc={doc}
                     pageNumber={pageNumber}
-                    size={sizes[pageNumber] ?? { width: 612, height: 792 }}
+                    size={sizes[pageNumber] ?? sizes[1] ?? { width: 612, height: 792 }}
                     active={visible.has(pageNumber)}
                     zoom={zoom}
                     highlight={highlight?.page === pageNumber ? highlight.bbox : null}
@@ -336,54 +352,23 @@ export function ReaderPage() {
         )}
       </section>
 
-      <aside className="flex w-[340px] shrink-0 flex-col border-l border-border bg-surface">
-        <div className="flex border-b border-border" role="tablist" aria-label="右栏">
-          {(
-            [
-              ["structure", "结构"],
-              ["qa", "问答"],
-              ["translate", "翻译"],
-            ] as const
-          ).map(([key, label]) => (
-            <button
-              key={key}
-              role="tab"
-              aria-selected={rightTab === key}
-              onClick={() => {
-                setRightTab(key);
-              }}
-              className={cn(
-                "flex-1 py-2 text-[var(--text-sm)]",
-                rightTab === key ? "border-b-2 border-primary font-medium text-primary" : "text-ink-2",
-              )}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-        <div className="min-h-0 flex-1">
-          {rightTab === "structure" && (
-            <StructurePanel
-              meta={structureQuery.data?.meta}
-              assets={structureQuery.data?.assets ?? []}
-              references={references}
-              flashRefId={flashRefId}
-              lastCitation={links.lastCitation}
-              onJumpPage={(target) => {
-                scrollToPage(target);
-              }}
-              onJumpReference={links.openReference}
-              onBackToCitation={links.backToCitation}
-            />
-          )}
-          {rightTab === "qa" && (
-            <EmptyState title="就这篇文献提问" description="问答台将在 T3.5 接入，回答中的每条结论都会附原文锚点。" />
-          )}
-          {rightTab === "translate" && (
-            <EmptyState title="尚未翻译" description="整篇翻译将在 T4.2 接入，完成后可在此下载 Markdown 或 HTML。" />
-          )}
-        </div>
-      </aside>
+      <RightRail
+        tab={rightTab}
+        onTab={setRightTab}
+        meta={structureQuery.data?.meta}
+        assets={structureQuery.data?.assets ?? []}
+        references={references}
+        flashRefId={flashRefId}
+        lastCitation={links.lastCitation}
+        onJumpPage={(target) => {
+          scrollToPage(target);
+        }}
+        onJumpReference={links.openReference}
+        onBackToCitation={links.backToCitation}
+        docId={docId}
+        docTitle={documentQuery.data.title}
+        onOpenAnchor={openAnchor}
+      />
 
       <SelectionToolbar
         onTranslate={() => {
