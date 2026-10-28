@@ -56,6 +56,7 @@ def create_app() -> FastAPI:
     from .api import jobs as jobs_api
     from .api import qa as qa_api
     from .api import translate as translate_api
+    from .api import writing as writing_api
     from .workers import register_all
 
     register_all()
@@ -65,6 +66,7 @@ def create_app() -> FastAPI:
     app.include_router(translate_api.router, prefix=settings.api_prefix)
     app.include_router(discover_api.router, prefix=settings.api_prefix)
     app.include_router(graphs_api.router, prefix=settings.api_prefix)
+    app.include_router(writing_api.router, prefix=settings.api_prefix)
 
     return app
 
