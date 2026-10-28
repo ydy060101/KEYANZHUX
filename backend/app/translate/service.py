@@ -53,10 +53,11 @@ _DIRECTION = {
 }
 
 
-def _messages(text: str, direction: str) -> list[dict[str, str]]:
+def _messages(text: str, direction: str, system: str | None = None) -> list[dict[str, str]]:
     src, dst = _DIRECTION[direction]
+    prompt = system or _SYSTEM.format(src=src, dst=dst)
     return [
-        {"role": "system", "content": _SYSTEM.format(src=src, dst=dst)},
+        {"role": "system", "content": prompt},
         {
             "role": "user",
             "content": f"Translate the text between the markers.\n{wrap_data(text)}",
@@ -69,13 +70,21 @@ def cache_key(text: str, direction: str) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-async def _translate_masked(text: str, direction: str, gateway: Any) -> str:
+async def _translate_masked(
+    text: str, direction: str, gateway: Any, *, system: str | None = None
+) -> str:
     """One non-streaming call over already-masked text."""
-    result = await gateway.chat(_messages(text, direction), tier="fast", temperature=0.0)
+    result = await gateway.chat(_messages(text, direction, system), tier="fast", temperature=0.0)
     return str(getattr(result, "text", result))
 
 
-async def translate_text(text: str, direction: str, gateway: Any) -> tuple[str, bool]:
+async def translate_text(
+    text: str,
+    direction: str,
+    gateway: Any,
+    *,
+    system: str | None = None,
+) -> tuple[str, bool]:
     """Translate a block; returns (text, repaired).
 
     ``repaired`` is True when the model broke a placeholder and the fallback
@@ -84,7 +93,7 @@ async def translate_text(text: str, direction: str, gateway: Any) -> tuple[str, 
     if not text.strip():
         return text, False
     protected = protect(text)
-    raw = await _translate_masked(protected.masked, direction, gateway)
+    raw = await _translate_masked(protected.masked, direction, gateway, system=system)
     missing, duplicated = integrity(raw, protected.items)
     if not missing and not duplicated:
         return restore(raw, protected.items), False
@@ -94,17 +103,19 @@ async def translate_text(text: str, direction: str, gateway: Any) -> tuple[str, 
         missing,
         duplicated,
     )
-    return await _translate_segments(text, direction, gateway), True
+    return await _translate_segments(text, direction, gateway, system=system), True
 
 
-async def _translate_segments(text: str, direction: str, gateway: Any) -> str:
+async def _translate_segments(
+    text: str, direction: str, gateway: Any, *, system: str | None = None
+) -> str:
     """Translate only the prose between protected spans; spans are copied."""
     out: list[str] = []
     for chunk, protected in split_segments(text):
         if protected or not chunk.strip():
             out.append(chunk)
             continue
-        out.append(await _translate_masked(chunk, direction, gateway))
+        out.append(await _translate_masked(chunk, direction, gateway, system=system))
     return "".join(out)
 
 
