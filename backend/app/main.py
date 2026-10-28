@@ -53,12 +53,14 @@ def create_app() -> FastAPI:
     from .api import documents as documents_api
     from .api import jobs as jobs_api
     from .api import qa as qa_api
+    from .api import translate as translate_api
     from .workers import register_all
 
     register_all()
     app.include_router(jobs_api.router, prefix=settings.api_prefix)
     app.include_router(documents_api.router, prefix=settings.api_prefix)
     app.include_router(qa_api.router, prefix=settings.api_prefix)
+    app.include_router(translate_api.router, prefix=settings.api_prefix)
 
     return app
 

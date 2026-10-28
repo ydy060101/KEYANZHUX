@@ -1,10 +1,10 @@
-import { EmptyState } from "@/design/States";
 import type { QaAnchor } from "@/features/qa/api";
 import { ReaderQaPanel } from "@/features/qa/ReaderQaPanel";
 import { cn } from "@/lib/cn";
 import type { Asset, DocMeta, Ref } from "./api";
 import type { CitationTarget } from "./CitationCard";
 import { StructurePanel } from "./StructurePanel";
+import { TranslatePanel, type TranslateRequest } from "./TranslatePanel";
 
 export type RightTab = "structure" | "qa" | "translate";
 
@@ -28,6 +28,7 @@ export interface RightRailProps {
   docId: string;
   docTitle: string;
   onOpenAnchor: (anchor: QaAnchor) => void;
+  translateRequest: TranslateRequest | null;
 }
 
 /** The reader's right rail (02 §4.2): structure, QA and translation tabs. */
@@ -45,6 +46,7 @@ export function RightRail({
   docId,
   docTitle,
   onOpenAnchor,
+  translateRequest,
 }: RightRailProps) {
   return (
     <aside className="flex w-[340px] shrink-0 flex-col border-l border-border bg-surface">
@@ -83,10 +85,7 @@ export function RightRail({
           <ReaderQaPanel docId={docId} docTitle={docTitle} onOpenAnchor={onOpenAnchor} />
         )}
         {tab === "translate" && (
-          <EmptyState
-            title="尚未翻译"
-            description="整篇翻译将在 T4.2 接入，完成后可在此下载 Markdown 或 HTML。"
-          />
+          <TranslatePanel docId={docId} request={translateRequest} />
         )}
       </div>
     </aside>

@@ -16,6 +16,7 @@ import { useReader, clampZoom } from "./readerStore";
 import { Toolbar } from "./ReaderToolbar";
 import { RightRail, type RightTab } from "./RightRail";
 import { SelectionToolbar } from "./SelectionToolbar";
+import type { TranslateRequest } from "./TranslatePanel";
 import { HIGHLIGHT_MS, useCitationLinks } from "./useCitationLinks";
 
 /** How many pages either side of the viewport keep a rendered bitmap. */
@@ -48,6 +49,7 @@ export function ReaderPage() {
   const [highlight, setHighlight] = useState<{ page: number; bbox: [number, number, number, number] } | null>(null);
   const [leftTab, setLeftTab] = useState<LeftTab>("toc");
   const [rightTab, setRightTab] = useState<RightTab>("structure");
+  const [translateRequest, setTranslateRequest] = useState<TranslateRequest | null>(null);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const nodes = useRef(new Map<number, HTMLDivElement>());
@@ -368,10 +370,14 @@ export function ReaderPage() {
         docId={docId}
         docTitle={documentQuery.data.title}
         onOpenAnchor={openAnchor}
+        translateRequest={translateRequest}
       />
 
       <SelectionToolbar
-        onTranslate={() => {
+        onTranslate={(text) => {
+          // A nonce, not just the text: selecting the same words twice must
+          // translate them again rather than show the previous result.
+          setTranslateRequest({ text, nonce: Date.now() });
           setRightTab("translate");
         }}
         onAsk={() => {

@@ -79,7 +79,21 @@ asyncio.run(main())
     }
 
     "build" {
-        Invoke-Step "vite build" { Push-Location (Join-Path $Root "frontend"); try { & npx vite build } finally { Pop-Location } }
+        # vite prints chunk-size notices on stderr; under
+        # $ErrorActionPreference=Stop, PowerShell 5.1 turns a native command's
+        # stderr into a terminating error even when the exit code is 0. The
+        # exit code, not the stream, decides this step.
+        Invoke-Step "vite build" {
+            Push-Location (Join-Path $Root "frontend")
+            $previous = $ErrorActionPreference
+            try {
+                $ErrorActionPreference = "Continue"
+                & npx vite build
+            } finally {
+                $ErrorActionPreference = $previous
+                Pop-Location
+            }
+        }
     }
 
     "accept" {

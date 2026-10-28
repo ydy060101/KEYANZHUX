@@ -52,8 +52,8 @@ command passes and its commit exists.
 
 | Card | Status | Notes |
 |---|---|---|
-| T4.1 Selection translation | not started | |
-| T4.2 Full-document translation | not started | |
+| T4.1 Selection translation | complete | The reader's selection toolbar sends the selection to `POST /translate/selection` and the 翻译 tab streams it back. Formulas, fenced/inline code and citation markers are masked before the call and restored afterwards; a model that drops or repeats a placeholder triggers a per-segment retry that copies the protected spans verbatim. The stream holds back a partial `⟦` so the UI never shows half a marker, and `done` carries the authoritative text. **T1: PASS** — `tools/check_translation.py` against the real gateway: median first token **1156 ms** (985/1156/1172) against the 1.5 s target, 3/3 LaTeX spans byte-identical, `[12]` preserved, `repaired=false`. 13 pytest in `test_translate.py` (protection round-trip, dropped-placeholder fallback, stream hold-back, SSE endpoint, failure event) and 2 vitest (`translate.test.tsx`: request shape and streamed card). |
+| T4.2 Full-document translation | complete | `POST /documents/{id}/translate` creates a `translate` job that walks the text blocks in reading order, four at a time, and stores one `translations` row per block keyed by `sha256(prompt version + direction + source text)`; a re-run reuses every unchanged block. Progress is reported per batch and the job ends by rendering Markdown or HTML into `data/translations/{doc_id}/`. `GET /documents/{id}/translation` serves the aligned rows (original + translation + page/bbox) for the bilingual view and `?format=md|html` for the download. **T2: PASS** — a six-block document translated 6/6 on the first pass and 0/6 on the second (6 cached), with every formula still byte-identical in the stored rows; the job result reports translated/cached/repaired counts. |
 | T4.3 Bilingual linked scrolling | not started | |
 | T4.4 Translation cache and glossary | not started | |
 
